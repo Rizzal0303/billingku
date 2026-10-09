@@ -1,6 +1,7 @@
 package com.example.data.local.dao
 
 import androidx.room.*
+import com.example.data.local.entity.AnnouncementEntity
 import com.example.data.local.entity.CustomerEntity
 import com.example.data.local.entity.PackagePlanEntity
 import com.example.data.local.entity.SettlementBatchEntity
@@ -271,4 +272,44 @@ interface SyncQueueDao {
     @Query("DELETE FROM pending_sync_queue")
     suspend fun clearQueue()
 }
+
+@Dao
+interface AnnouncementDao {
+    @Query("SELECT * FROM announcements ORDER BY createdAt DESC")
+    fun getAllAnnouncements(): Flow<List<AnnouncementEntity>>
+
+    @Query("SELECT * FROM announcements WHERE status = 'ACTIVE' ORDER BY createdAt DESC")
+    fun getActiveAnnouncements(): Flow<List<AnnouncementEntity>>
+
+    @Query("SELECT * FROM announcements WHERE id = :id LIMIT 1")
+    suspend fun getAnnouncementById(id: Long): AnnouncementEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAnnouncement(announcement: AnnouncementEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAnnouncements(announcements: List<AnnouncementEntity>)
+
+    @Update
+    suspend fun updateAnnouncement(announcement: AnnouncementEntity)
+
+    @Delete
+    suspend fun deleteAnnouncement(announcement: AnnouncementEntity)
+
+    @Query("DELETE FROM announcements WHERE id = :id")
+    suspend fun deleteAnnouncementById(id: Long)
+
+    @Query("UPDATE announcements SET status = :status, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateStatus(id: Long, status: String, updatedAt: Long = System.currentTimeMillis())
+
+    @Query("SELECT * FROM announcements ORDER BY createdAt DESC")
+    suspend fun getAllAnnouncementsSync(): List<AnnouncementEntity>
+
+    @Query("SELECT * FROM announcements WHERE status = 'ACTIVE' ORDER BY createdAt DESC")
+    suspend fun getActiveAnnouncementsSync(): List<AnnouncementEntity>
+
+    @Query("DELETE FROM announcements")
+    suspend fun clearAllAnnouncements()
+}
+
 

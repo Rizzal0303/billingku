@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import com.example.data.local.AppDatabase
+import com.example.data.local.entity.AnnouncementEntity
 import com.example.data.local.entity.CustomerEntity
 import com.example.data.local.entity.PackagePlanEntity
 import com.example.data.local.entity.SettlementBatchEntity
@@ -357,4 +358,43 @@ class BillingRepository(private val db: AppDatabase) {
         val rnd = (100..999).random()
         return "INV-${sdf.format(Date())}-$rnd"
     }
+
+    // -------------------------------------------------------------
+    // ANNOUNCEMENTS & BROADCAST NOTIFICATIONS (NET-PAY)
+    // -------------------------------------------------------------
+    val allAnnouncements: Flow<List<AnnouncementEntity>> = db.announcementDao().getAllAnnouncements()
+    val activeAnnouncements: Flow<List<AnnouncementEntity>> = db.announcementDao().getActiveAnnouncements()
+
+    suspend fun getAnnouncementById(id: Long): AnnouncementEntity? = db.announcementDao().getAnnouncementById(id)
+
+    suspend fun insertAnnouncement(announcement: AnnouncementEntity): Long {
+        val toSave = if (announcement.id == 0L) {
+            announcement.copy(id = com.example.util.IdGenerator.generateUniqueId())
+        } else {
+            announcement
+        }
+        db.announcementDao().insertAnnouncement(toSave)
+        syncDirectPush("ANNOUNCEMENT", toSave.id, "UPSERT") { it.pushAnnouncement(toSave) }
+        return toSave.id
+    }
+
+    suspend fun updateAnnouncement(announcement: AnnouncementEntity) {
+        val updated = announcement.copy(updatedAt = System.currentTimeMillis())
+        db.announcementDao().updateAnnouncement(updated)
+        syncDirectPush("ANNOUNCEMENT", updated.id, "UPSERT") { it.pushAnnouncement(updated) }
+    }
+
+    suspend fun deleteAnnouncement(announcement: AnnouncementEntity) {
+        db.announcementDao().deleteAnnouncement(announcement)
+        syncDirectPush("ANNOUNCEMENT", announcement.id, "DELETE") { it.deleteRemoteAnnouncement(announcement.id) }
+    }
+
+    suspend fun toggleAnnouncementStatus(id: Long, newStatus: String) {
+        db.announcementDao().updateStatus(id, newStatus)
+        val item = db.announcementDao().getAnnouncementById(id)
+        if (item != null) {
+            syncDirectPush("ANNOUNCEMENT", item.id, "UPSERT") { it.pushAnnouncement(item) }
+        }
+    }
 }
+

@@ -158,6 +158,22 @@ function initTables(${'$'}pdo) {
         UNIQUE KEY (`username`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
+    // Tabel Pengumuman & Notifikasi Gangguan (Siap dibaca oleh aplikasi pelanggan Net-pay)
+    ${'$'}pdo->exec("CREATE TABLE IF NOT EXISTS `announcements` (
+        `id` BIGINT NOT NULL PRIMARY KEY,
+        `title` VARCHAR(200) NOT NULL,
+        `category` VARCHAR(50) NOT NULL DEFAULT 'INFO',
+        `message` TEXT NOT NULL,
+        `targetScope` VARCHAR(100) DEFAULT 'SEMUA',
+        `status` VARCHAR(30) DEFAULT 'ACTIVE',
+        `estimatedEnd` VARCHAR(100) DEFAULT '',
+        `createdBy` VARCHAR(100) DEFAULT 'Admin',
+        `createdAt` BIGINT DEFAULT 0,
+        `updatedAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX (`status`),
+        INDEX (`category`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
     // Pastikan kolom-kolom baru tersedia pada instalasi database lama (Safe Column Migrations)
     try { ${'$'}pdo->exec("ALTER TABLE `staff_members` MODIFY COLUMN `pin` VARCHAR(255) DEFAULT '1234'"); } catch (Exception ${'$'}e) {}
     try { ${'$'}pdo->exec("ALTER TABLE `customers` ADD COLUMN `odpLocation` VARCHAR(150) DEFAULT '' AFTER `address`"); } catch (Exception ${'$'}e) {}
@@ -1037,6 +1053,120 @@ if (${'$'}action === 'check_payment_status') {
     } catch (Exception ${'$'}e) {
         http_response_code(500);
         echo json_encode(['status' => 'error', 'code' => 500, 'message' => 'Gagal memeriksa status: ' . ${'$'}e->getMessage()]);
+        exit();
+    }
+}
+
+// =============================================================
+// (O) ENDPOINT PENGUMUMAN & NOTIFIKASI GANGGUAN (UNTUK NET-PAY)
+// =============================================================
+
+// (O1) GET ANNOUNCEMENTS (DIBACA OLEH APLIKASI PELANGGAN NET-PAY)
+if (${'$'}action === 'get_announcements') {
+    ${'$'}filterStatus = ${'$'}_GET['status'] ?? (${'$'}jsonData['status'] ?? 'ACTIVE');
+    ${'$'}scope = ${'$'}_GET['scope'] ?? (${'$'}jsonData['scope'] ?? '');
+
+    try {
+        if (${'$'}filterStatus === 'ALL') {
+            if (!empty(${'$'}scope)) {
+                ${'$'}stmt = ${'$'}pdo->prepare("SELECT * FROM `announcements` WHERE `targetScope` = 'SEMUA' OR `targetScope` = :scope ORDER BY `createdAt` DESC");
+                ${'$'}stmt->execute([':scope' => ${'$'}scope]);
+            } else {
+                ${'$'}stmt = ${'$'}pdo->query("SELECT * FROM `announcements` ORDER BY `createdAt` DESC");
+            }
+        } else {
+            if (!empty(${'$'}scope)) {
+                ${'$'}stmt = ${'$'}pdo->prepare("SELECT * FROM `announcements` WHERE `status` = :st AND (`targetScope` = 'SEMUA' OR `targetScope` = :scope) ORDER BY `createdAt` DESC");
+                ${'$'}stmt->execute([':st' => ${'$'}filterStatus, ':scope' => ${'$'}scope]);
+            } else {
+                ${'$'}stmt = ${'$'}pdo->prepare("SELECT * FROM `announcements` WHERE `status` = :st ORDER BY `createdAt` DESC");
+                ${'$'}stmt->execute([':st' => ${'$'}filterStatus]);
+            }
+        }
+
+        ${'$'}rows = ${'$'}stmt->fetchAll();
+        echo json_encode([
+            'status'  => 'success',
+            'code'    => 200,
+            'count'   => count(${'$'}rows),
+            'message' => 'Daftar pengumuman berhasil diambil',
+            'data'    => ${'$'}rows
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        exit();
+    } catch (Exception ${'$'}e) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'code' => 500, 'message' => 'Gagal mengambil pengumuman: ' . ${'$'}e->getMessage()]);
+        exit();
+    }
+}
+
+// (O2) PUSH ANNOUNCEMENT (DIPUBLIKASIKAN DARI APLIKASI BILLINGKU KASIR/ADMIN)
+if (${'$'}action === 'push_announcement') {
+    ${'$'}ann = ${'$'}jsonData['announcement'] ?? (${'$'}_POST['announcement'] ?? []);
+    if (is_string(${'$'}ann)) ${'$'}ann = json_decode(${'$'}ann, true, 512, JSON_BIGINT_AS_STRING);
+    if (empty(${'$'}ann) && !empty(${'$'}jsonData['id'])) ${'$'}ann = ${'$'}jsonData;
+
+    if (empty(${'$'}ann) || empty(${'$'}ann['id']) || empty(${'$'}ann['title'])) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'code' => 400, 'message' => 'Data pengumuman tidak valid (ID dan Judul wajib diisi)']);
+        exit();
+    }
+
+    try {
+        ${'$'}stmt = ${'$'}pdo->prepare("INSERT INTO `announcements`
+            (`id`, `title`, `category`, `message`, `targetScope`, `status`, `estimatedEnd`, `createdBy`, `createdAt`)
+            VALUES (:id, :title, :category, :message, :targetScope, :status, :estimatedEnd, :createdBy, :createdAt)
+            ON DUPLICATE KEY UPDATE
+            `title` = VALUES(`title`),
+            `category` = VALUES(`category`),
+            `message` = VALUES(`message`),
+            `targetScope` = VALUES(`targetScope`),
+            `status` = VALUES(`status`),
+            `estimatedEnd` = VALUES(`estimatedEnd`),
+            `createdBy` = VALUES(`createdBy`);");
+
+        ${'$'}stmt->execute([
+            ':id'           => ${'$'}ann['id'],
+            ':title'        => ${'$'}ann['title'],
+            ':category'     => ${'$'}ann['category'] ?? 'INFO',
+            ':message'      => ${'$'}ann['message'] ?? '',
+            ':targetScope'  => ${'$'}ann['targetScope'] ?? 'SEMUA',
+            ':status'       => ${'$'}ann['status'] ?? 'ACTIVE',
+            ':estimatedEnd' => ${'$'}ann['estimatedEnd'] ?? '',
+            ':createdBy'    => ${'$'}ann['createdBy'] ?? 'Admin',
+            ':createdAt'    => ${'$'}ann['createdAt'] ?? round(microtime(true) * 1000)
+        ]);
+
+        echo json_encode([
+            'status'  => 'success',
+            'code'    => 200,
+            'message' => 'Pengumuman berhasil disinkronkan ke server untuk aplikasi Net-pay!'
+        ]);
+        exit();
+    } catch (Exception ${'$'}e) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'code' => 500, 'message' => 'Gagal menyimpan pengumuman: ' . ${'$'}e->getMessage()]);
+        exit();
+    }
+}
+
+// (O3) HAPUS PENGUMUMAN DARI SERVER
+if (${'$'}action === 'delete_announcement') {
+    ${'$'}id = ${'$'}jsonData['id'] ?? (${'$'}_POST['id'] ?? (${'$'}_GET['id'] ?? 0));
+    if (empty(${'$'}id)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'code' => 400, 'message' => 'ID Pengumuman wajib diisi']);
+        exit();
+    }
+
+    try {
+        ${'$'}stmt = ${'$'}pdo->prepare("DELETE FROM `announcements` WHERE `id` = :id");
+        ${'$'}stmt->execute([':id' => ${'$'}id]);
+        echo json_encode(['status' => 'success', 'code' => 200, 'message' => 'Pengumuman berhasil dihapus dari server!']);
+        exit();
+    } catch (Exception ${'$'}e) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'code' => 500, 'message' => 'Gagal menghapus pengumuman: ' . ${'$'}e->getMessage()]);
         exit();
     }
 }

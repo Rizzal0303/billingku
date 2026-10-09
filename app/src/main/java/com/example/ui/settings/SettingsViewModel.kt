@@ -3,6 +3,7 @@ package com.example.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.data.local.entity.AnnouncementEntity
 import com.example.data.local.entity.PackagePlanEntity
 import com.example.data.local.entity.StaffEntity
 import com.example.data.local.entity.TransactionEntity
@@ -71,7 +72,12 @@ data class SettingsUiState(
     val mysqlLastSyncStatus: String = "",
     val isMysqlTesting: Boolean = false,
     val isMysqlSyncing: Boolean = false,
-    val pendingSyncCount: Int = 0
+    val pendingSyncCount: Int = 0,
+    // Customer Announcements & Broadcasts (Net-pay Integration)
+    val announcements: List<AnnouncementEntity> = emptyList(),
+    val activeAnnouncementsCount: Int = 0,
+    val isAnnouncementSyncing: Boolean = false,
+    val announcementFeedback: String? = null
 )
 
 class SettingsViewModel(
@@ -148,6 +154,18 @@ class SettingsViewModel(
         viewModelScope.launch {
             printerManager.printerStatus.collect { status ->
                 _uiState.update { it.copy(printerStatus = status) }
+            }
+        }
+
+        viewModelScope.launch {
+            repository.allAnnouncements.collect { list ->
+                _uiState.update { it.copy(announcements = list) }
+            }
+        }
+
+        viewModelScope.launch {
+            repository.activeAnnouncements.collect { list ->
+                _uiState.update { it.copy(activeAnnouncementsCount = list.size) }
             }
         }
     }
@@ -767,6 +785,85 @@ class SettingsViewModel(
                 onFailure = { err -> onResult(false, err.localizedMessage ?: err.message ?: "Sinkronisasi gagal") }
             )
         }
+    }
+
+    // ------------------------------------------------------------------------
+    // ANNOUNCEMENTS & BROADCASTS (NET-PAY)
+    // ------------------------------------------------------------------------
+    fun saveAnnouncement(
+        id: Long = 0L,
+        title: String,
+        category: String,
+        message: String,
+        targetScope: String = "SEMUA",
+        status: String = "ACTIVE",
+        estimatedEnd: String = "",
+        createdBy: String = "Admin",
+        onFinished: (AnnouncementEntity) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val announcement = AnnouncementEntity(
+                id = id,
+                title = title.trim(),
+                category = category,
+                message = message.trim(),
+                targetScope = targetScope.trim().ifBlank { "SEMUA" },
+                status = status,
+                estimatedEnd = estimatedEnd.trim(),
+                createdBy = createdBy,
+                createdAt = if (id != 0L) {
+                    val existing = repository.getAnnouncementById(id)
+                    existing?.createdAt ?: System.currentTimeMillis()
+                } else {
+                    System.currentTimeMillis()
+                },
+                updatedAt = System.currentTimeMillis()
+            )
+
+            if (id == 0L) {
+                val newId = repository.insertAnnouncement(announcement)
+                onFinished(announcement.copy(id = newId))
+            } else {
+                repository.updateAnnouncement(announcement)
+                onFinished(announcement)
+            }
+        }
+    }
+
+    fun toggleAnnouncementStatus(id: Long, currentStatus: String) {
+        viewModelScope.launch {
+            val nextStatus = if (currentStatus == "ACTIVE") "RESOLVED" else "ACTIVE"
+            repository.toggleAnnouncementStatus(id, nextStatus)
+        }
+    }
+
+    fun deleteAnnouncement(announcement: AnnouncementEntity, onFinished: () -> Unit = {}) {
+        viewModelScope.launch {
+            repository.deleteAnnouncement(announcement)
+            onFinished()
+        }
+    }
+
+    fun pushAnnouncementToServer(announcement: AnnouncementEntity, onResult: (Boolean, String) -> Unit) {
+        val sync = mysqlSyncManager
+        if (sync == null || sync.getApiUrl().isBlank()) {
+            onResult(false, "URL Server MySQL belum dikonfigurasi di Pengaturan")
+            return
+        }
+
+        _uiState.update { it.copy(isAnnouncementSyncing = true) }
+        viewModelScope.launch {
+            val res = sync.pushAnnouncement(announcement)
+            _uiState.update { it.copy(isAnnouncementSyncing = false) }
+            res.fold(
+                onSuccess = { onResult(true, "✓ Pengumuman berhasil disinkronkan ke server Net-pay!") },
+                onFailure = { err -> onResult(false, err.localizedMessage ?: err.message ?: "Gagal sinkronisasi") }
+            )
+        }
+    }
+
+    fun getNetPayAnnouncementApiUrl(): String {
+        return mysqlSyncManager?.getNetPayAnnouncementApiUrl() ?: "https://your-domain.com/billingku.php?action=get_announcements"
     }
 }
 

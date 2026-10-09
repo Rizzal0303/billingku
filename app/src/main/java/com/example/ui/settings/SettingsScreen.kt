@@ -58,7 +58,8 @@ fun SettingsScreen(
         "Paket WiFi & Layanan",
         "Kelola Staf & Kasir",
         "Laporan & Rekap Keuangan",
-        "Database MySQL & REST API"
+        "Database MySQL & REST API",
+        "Pusat Pengumuman Pelanggan"
     )
 
     if (showAdminPinDialogForTab != null) {
@@ -181,8 +182,8 @@ fun SettingsScreen(
 
     val hasAdminAccess = isAdmin || isElevatedByPin
 
-    // ---------------- IF SUB-SCREEN SELECTED (TAB 0..4) ----------------
-    if (uiState.currentTab in 0..4) {
+    // ---------------- IF SUB-SCREEN SELECTED (TAB 0..5) ----------------
+    if (uiState.currentTab in 0..5) {
         BackHandler(enabled = true) {
             viewModel.setTab(-1)
         }
@@ -289,6 +290,12 @@ fun SettingsScreen(
                             onUnlockWithPin = { showAdminPinDialogForTab = 4 }
                         )
                     }
+                    5 -> AnnouncementCenterTab(
+                        viewModel = viewModel,
+                        uiState = uiState,
+                        currentStaff = currentStaff,
+                        onShowFeedback = { saveFeedbackMessage = it }
+                    )
                 }
             }
         }
@@ -593,6 +600,38 @@ fun SettingsScreen(
                                 subtitle = "Pengingat tagihan pelanggan & kirim notifikasi",
                                 testTag = "settings_menu_due_notification",
                                 onClick = { showDueNotificationDialog = true }
+                            )
+
+                            HorizontalDivider(
+                                color = Slate100,
+                                modifier = Modifier.padding(start = 68.dp, end = 16.dp)
+                            )
+
+                            SettingsMenuItem(
+                                icon = Icons.Default.Campaign,
+                                iconTint = Color(0xFFEA580C),
+                                iconBackground = Color(0xFFFFEDD5),
+                                title = "Pusat Pengumuman & Broadcast",
+                                subtitle = if (uiState.activeAnnouncementsCount > 0)
+                                    "${uiState.activeAnnouncementsCount} Pengumuman aktif • Disiarkan ke Net-pay"
+                                else
+                                    "Kirim info gangguan jaringan & maintenance ke Net-pay",
+                                trailingBadge = {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = if (uiState.activeAnnouncementsCount > 0) DangerRed.copy(alpha = 0.12f) else Color(0xFFFFEDD5)
+                                    ) {
+                                        Text(
+                                            text = if (uiState.activeAnnouncementsCount > 0) "${uiState.activeAnnouncementsCount} Aktif" else "Net-pay",
+                                            color = if (uiState.activeAnnouncementsCount > 0) DangerRed else Color(0xFFC2410C),
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                },
+                                testTag = "settings_menu_announcements",
+                                onClick = { viewModel.setTab(5) }
                             )
 
                             if (isAdmin) {

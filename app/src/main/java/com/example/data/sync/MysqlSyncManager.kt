@@ -3,6 +3,7 @@ package com.example.data.sync
 import android.content.Context
 import android.content.SharedPreferences
 import com.example.data.local.AppDatabase
+import com.example.data.local.entity.AnnouncementEntity
 import com.example.data.local.entity.CustomerEntity
 import com.example.data.local.entity.PackagePlanEntity
 import com.example.data.local.entity.SettlementBatchEntity
@@ -819,6 +820,40 @@ class MysqlSyncManager(
         executeSyncPost("delete_settlement", rootJson, "✓ Setoran (ID $id) dihapus dari MySQL")
     }
 
+    suspend fun pushAnnouncement(a: AnnouncementEntity): Result<Boolean> = withContext(Dispatchers.IO) {
+        val rootJson = JSONObject().apply {
+            put("action", "push_announcement")
+            put("api_key", getApiKey())
+            put("announcement", JSONObject().apply {
+                put("id", a.id)
+                put("title", a.title)
+                put("category", a.category)
+                put("message", a.message)
+                put("targetScope", a.targetScope)
+                put("status", a.status)
+                put("estimatedEnd", a.estimatedEnd)
+                put("createdBy", a.createdBy)
+                put("createdAt", a.createdAt)
+                put("updatedAt", a.updatedAt)
+            })
+        }
+        executeSyncPost("push_announcement", rootJson, "✓ Pengumuman '${a.title}' disinkronkan ke server Net-pay")
+    }
+
+    suspend fun deleteRemoteAnnouncement(id: Long): Result<Boolean> = withContext(Dispatchers.IO) {
+        val rootJson = JSONObject().apply {
+            put("action", "delete_announcement")
+            put("api_key", getApiKey())
+            put("id", id)
+        }
+        executeSyncPost("delete_announcement", rootJson, "✓ Pengumuman (ID $id) dihapus dari server")
+    }
+
+    fun getNetPayAnnouncementApiUrl(): String {
+        val base = normalizeUrl(getApiUrl())
+        return if (base.isNotBlank()) "$base?action=get_announcements" else "https://your-domain.com/billingku.php?action=get_announcements"
+    }
+
     // ------------------------------------------------------------------------
     // OFFLINE SYNC QUEUE MANAGEMENT
     // ------------------------------------------------------------------------
@@ -881,6 +916,14 @@ class MysqlSyncManager(
                             if (s != null) pushStaff(s).isSuccess else deleteStaff(item.entityId).isSuccess
                         } else {
                             deleteStaff(item.entityId).isSuccess
+                        }
+                    }
+                    "ANNOUNCEMENT" -> {
+                        if (item.action == "UPSERT") {
+                            val a = db.announcementDao().getAnnouncementById(item.entityId)
+                            if (a != null) pushAnnouncement(a).isSuccess else deleteRemoteAnnouncement(item.entityId).isSuccess
+                        } else {
+                            deleteRemoteAnnouncement(item.entityId).isSuccess
                         }
                     }
                     else -> true

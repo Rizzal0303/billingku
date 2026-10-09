@@ -113,7 +113,7 @@ data class StaffEntity(
 data class SyncQueueEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val entityType: String, // "CUSTOMER", "PACKAGE", "TRANSACTION", "SETTLEMENT", "STAFF"
+    val entityType: String, // "CUSTOMER", "PACKAGE", "TRANSACTION", "SETTLEMENT", "STAFF", "ANNOUNCEMENT"
     val entityId: Long,
     val action: String, // "UPSERT", "DELETE"
     val payloadJson: String = "",
@@ -121,4 +121,27 @@ data class SyncQueueEntity(
     val retryCount: Int = 0,
     val lastError: String? = null
 )
+
+@Entity(
+    tableName = "announcements",
+    indices = [
+        Index(value = ["status"]),
+        Index(value = ["category"]),
+        Index(value = ["createdAt"])
+    ]
+)
+data class AnnouncementEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val title: String,
+    val category: String = "INFO", // "GANGGUAN", "MAINTENANCE", "INFO", "PROMO"
+    val message: String,
+    val targetScope: String = "SEMUA", // "SEMUA" atau spesifik ODP / Wilayah
+    val status: String = "ACTIVE", // "ACTIVE", "RESOLVED", "DRAFT"
+    val estimatedEnd: String = "", // e.g. "Hari ini 16:00 WIB"
+    val createdBy: String = "Admin",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
 

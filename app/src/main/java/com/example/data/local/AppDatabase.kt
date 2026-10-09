@@ -5,12 +5,14 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.data.local.dao.AnnouncementDao
 import com.example.data.local.dao.CustomerDao
 import com.example.data.local.dao.PackagePlanDao
 import com.example.data.local.dao.SettlementDao
 import com.example.data.local.dao.StaffDao
 import com.example.data.local.dao.SyncQueueDao
 import com.example.data.local.dao.TransactionDao
+import com.example.data.local.entity.AnnouncementEntity
 import com.example.data.local.entity.CustomerEntity
 import com.example.data.local.entity.PackagePlanEntity
 import com.example.data.local.entity.SettlementBatchEntity
@@ -28,9 +30,10 @@ import kotlinx.coroutines.launch
         TransactionEntity::class,
         StaffEntity::class,
         SettlementBatchEntity::class,
-        SyncQueueEntity::class
+        SyncQueueEntity::class,
+        AnnouncementEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -40,6 +43,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun staffDao(): StaffDao
     abstract fun settlementDao(): SettlementDao
     abstract fun syncQueueDao(): SyncQueueDao
+    abstract fun announcementDao(): AnnouncementDao
 
     companion object {
         @Volatile
@@ -82,6 +86,21 @@ abstract class AppDatabase : RoomDatabase() {
             )
             staffDao.insertStaff(
                 StaffEntity(username = "teknisi1", name = "Agus Kurniawan", role = "TEKNISI", phone = "085678901234", pin = "2222")
+            )
+
+            // Initial announcement
+            val announcementDao = db.announcementDao()
+            announcementDao.insertAnnouncement(
+                AnnouncementEntity(
+                    id = 1L,
+                    title = "Layanan Internet Beroperasi Normal",
+                    category = "INFO",
+                    message = "Seluruh distribusi jaringan WiFi RT/RW Net saat ini berjalan lancar dan optimal. Hubungi admin jika membutuhkan bantuan teknis.",
+                    targetScope = "SEMUA",
+                    status = "ACTIVE",
+                    estimatedEnd = "",
+                    createdBy = "Admin"
+                )
             )
         }
     }
