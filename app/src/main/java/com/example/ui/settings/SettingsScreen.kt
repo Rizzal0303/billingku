@@ -511,7 +511,7 @@ fun SettingsScreen(
                                     iconTint = Color(0xFF4F46E5),
                                     iconBackground = Color(0xFFEEF2FF),
                                     title = "Kelola Staf & Kasir",
-                                    subtitle = "${uiState.staffList.size} Petugas terdaftar • Atur akun & hak akses",
+                                    subtitle = "${uiState.staffList.count { !it.role.equals("ADMIN", ignoreCase = true) }} Petugas operasional • Atur akun kasir & teknisi",
                                     testTag = "settings_menu_staff",
                                     onClick = {
                                         viewModel.setTab(2)

@@ -38,6 +38,10 @@ fun StaffSettingsTab(
     onOpenChangePin: (StaffEntity) -> Unit = {},
     onShowFeedback: (String) -> Unit = {}
 ) {
+    val employeeList = remember(uiState.staffList) {
+        uiState.staffList.filter { !it.role.equals("ADMIN", ignoreCase = true) }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier
@@ -55,13 +59,13 @@ fun StaffSettingsTab(
                 ) {
                     Column {
                         Text(
-                            text = "Manajemen Staff & Hak Akses (${uiState.staffList.size})",
+                            text = "Daftar Petugas & Kasir (${employeeList.size})",
                             fontWeight = FontWeight.Bold,
                             color = Slate900,
                             fontSize = 16.sp
                         )
                         Text(
-                            text = "Kelola akun kasir, teknisi, serta pengaturan PIN otorisasi",
+                            text = "Kelola akun kasir & teknisi operasional, atur akses & reset PIN",
                             color = Slate400,
                             fontSize = 11.sp
                         )
@@ -108,13 +112,13 @@ fun StaffSettingsTab(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = "Keamanan & Penggantian PIN (Khusus Admin)",
+                                text = "Akses Petugas Operasional (Kasir & Teknisi)",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp,
                                 color = Color(0xFF4338CA)
                             )
                             Text(
-                                text = "Hanya Administrator yang memiliki wewenang untuk mengubah PIN akun petugas kasir, teknisi, maupun PIN Administrator.",
+                                text = "Halaman ini khusus untuk mengelola akun karyawan. Untuk mengubah profil nama dan PIN Administrator utama, silakan gunakan menu Edit Profil di Pengaturan.",
                                 fontSize = 11.sp,
                                 color = Slate600,
                                 lineHeight = 15.sp
@@ -124,7 +128,47 @@ fun StaffSettingsTab(
                 }
             }
 
-            items(uiState.staffList) { staff ->
+            if (employeeList.isEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 12.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Slate200)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(28.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.GroupAdd,
+                                contentDescription = null,
+                                tint = Slate400,
+                                modifier = Modifier.size(44.dp)
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Belum Ada Petugas Terdaftar",
+                                fontWeight = FontWeight.Bold,
+                                color = Slate800,
+                                fontSize = 15.sp
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Klik tombol '+ Tambah' di atas untuk mendaftarkan akun kasir atau teknisi baru.",
+                                color = Slate500,
+                                fontSize = 12.sp,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            } else {
+                items(employeeList) { staff ->
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(18.dp),
@@ -299,6 +343,7 @@ fun StaffSettingsTab(
                 }
             }
         }
+    }
     }
 
     if (uiState.isStaffDialogOpen) {
@@ -529,7 +574,7 @@ fun StaffDialog(
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    text = if (staff != null) "Edit Akun Staff" else "Tambah Akun Staff",
+                    text = if (staff != null) "Edit Petugas Kasir / Teknisi" else "Tambah Petugas Baru",
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp,
                     color = Slate900
@@ -582,10 +627,10 @@ fun StaffDialog(
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
-                Text("Role / Hak Akses:", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = Slate700)
+                Text("Role / Hak Akses Petugas:", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = Slate700)
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("ADMIN", "KASIR", "TEKNISI").forEach { r ->
+                    listOf("KASIR", "TEKNISI").forEach { r ->
                         val isSelected = role == r
                         Box(
                             modifier = Modifier

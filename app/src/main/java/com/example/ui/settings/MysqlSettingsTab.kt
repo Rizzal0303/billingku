@@ -51,6 +51,7 @@ fun MysqlSettingsTab(
     var testDialogMessage by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     var showDownloadConfirmDialog by remember { mutableStateOf(false) }
     var showUploadConfirmDialog by remember { mutableStateOf(false) }
+    var showScriptDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -224,6 +225,21 @@ fun MysqlSettingsTab(
                         color = Slate500,
                         modifier = Modifier.padding(start = 4.dp, top = 2.dp)
                     )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    OutlinedButton(
+                        onClick = { showScriptDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = BluePrimary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("btn_view_php_script")
+                    ) {
+                        Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Lihat & Salin Script billingku.php Terbaru", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
 
                 // Input API Secret Key
@@ -546,5 +562,111 @@ fun MysqlSettingsTab(
                 }
             }
         )
+    }
+
+    // Dialog Tampilan Script billingku.php
+    if (showScriptDialog) {
+        val scriptText = remember { BillingkuPhpScript.PHP_CODE.trimIndent() }
+        Dialog(
+            onDismissRequest = { showScriptDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.95f)
+                    .fillMaxHeight(0.85f),
+                shape = RoundedCornerShape(16.dp),
+                color = Color.White,
+                tonalElevation = 6.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Terminal, contentDescription = null, tint = BluePrimary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text("Script billingku.php", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Text("Mendukung Tabel Tagihan `bills` & Pembayaran Mandiri", fontSize = 11.sp, color = Slate500)
+                            }
+                        }
+                        IconButton(onClick = { showScriptDialog = false }) {
+                            Icon(Icons.Default.Close, contentDescription = "Tutup")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF0F172A))
+                            .padding(12.dp)
+                    ) {
+                        val scriptScrollState = rememberScrollState()
+                        val scriptHScrollState = rememberScrollState()
+                        Text(
+                            text = scriptText,
+                            color = Color(0xFFE2E8F0),
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier
+                                .verticalScroll(scriptScrollState)
+                                .horizontalScroll(scriptHScrollState)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val sendIntent: Intent = Intent().apply {
+                                    action = Intent.ACTION_SEND
+                                    putExtra(Intent.EXTRA_TEXT, scriptText)
+                                    type = "text/plain"
+                                }
+                                val shareIntent = Intent.createChooser(sendIntent, "Bagikan Script billingku.php")
+                                context.startActivity(shareIntent)
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Bagikan", fontSize = 12.sp)
+                        }
+
+                        Button(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clip = ClipData.newPlainText("billingku.php", scriptText)
+                                clipboard.setPrimaryClip(clip)
+                                Toast.makeText(context, "Script billingku.php berhasil disalin ke Clipboard!", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.weight(1.5f),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = BluePrimary)
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Salin Seluruh Script", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
     }
 }

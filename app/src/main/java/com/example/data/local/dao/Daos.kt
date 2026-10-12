@@ -2,6 +2,7 @@ package com.example.data.local.dao
 
 import androidx.room.*
 import com.example.data.local.entity.AnnouncementEntity
+import com.example.data.local.entity.BillEntity
 import com.example.data.local.entity.CustomerEntity
 import com.example.data.local.entity.PackagePlanEntity
 import com.example.data.local.entity.SettlementBatchEntity
@@ -310,6 +311,76 @@ interface AnnouncementDao {
 
     @Query("DELETE FROM announcements")
     suspend fun clearAllAnnouncements()
+}
+
+@Dao
+interface BillDao {
+    @Query("SELECT * FROM bills ORDER BY dueDate ASC, id ASC")
+    fun getAllBills(): Flow<List<BillEntity>>
+
+    @Query("SELECT * FROM bills WHERE status = 'UNPAID' ORDER BY dueDate ASC, id ASC")
+    fun getUnpaidBills(): Flow<List<BillEntity>>
+
+    @Query("SELECT * FROM bills WHERE periodMonth = :periodMonth ORDER BY dueDate ASC")
+    fun getBillsByMonth(periodMonth: String): Flow<List<BillEntity>>
+
+    @Query("SELECT * FROM bills WHERE customerId = :customerId ORDER BY id DESC")
+    fun getBillsByCustomer(customerId: Long): Flow<List<BillEntity>>
+
+    @Query("SELECT * FROM bills WHERE customerId = :customerId AND periodMonth = :periodMonth LIMIT 1")
+    suspend fun getBillByCustomerAndPeriod(customerId: Long, periodMonth: String): BillEntity?
+
+    @Query("SELECT * FROM bills WHERE billCode = :code LIMIT 1")
+    suspend fun getBillByCode(code: String): BillEntity?
+
+    @Query("SELECT * FROM bills WHERE id = :id")
+    suspend fun getBillById(id: Long): BillEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBill(bill: BillEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBills(bills: List<BillEntity>)
+
+    @Update
+    suspend fun updateBill(bill: BillEntity)
+
+    @Delete
+    suspend fun deleteBill(bill: BillEntity)
+
+    @Query("SELECT * FROM bills")
+    suspend fun getAllBillsSync(): List<BillEntity>
+
+    @Query("SELECT * FROM bills WHERE status = 'UNPAID'")
+    suspend fun getUnpaidBillsSync(): List<BillEntity>
+
+    @Query("DELETE FROM bills WHERE id = :id")
+    suspend fun deleteBillById(id: Long)
+
+    @Query("DELETE FROM bills")
+    suspend fun clearAllBills()
+
+    @Query("DELETE FROM bills WHERE id NOT IN (:keepIds)")
+    suspend fun deleteBillsNotIn(keepIds: List<Long>)
+
+    @Query("UPDATE bills SET status = 'PAID', paidAt = :paidAt, paymentMethod = :paymentMethod, paidVia = :paidVia, cashierName = :cashierName, invoiceNumber = :invoiceNumber WHERE id = :billId")
+    suspend fun markBillAsPaid(
+        billId: Long,
+        paidAt: Long,
+        paymentMethod: String,
+        paidVia: String,
+        cashierName: String,
+        invoiceNumber: String
+    )
+
+    @Query("SELECT COUNT(*) FROM bills WHERE status = 'UNPAID'")
+    fun getUnpaidBillCount(): Flow<Int>
+
+    @Query("SELECT COALESCE(SUM(totalAmount), 0) FROM bills WHERE status = 'UNPAID'")
+    fun getTotalUnpaidAmount(): Flow<Long>
+
+    @Query("UPDATE bills SET amount = :newAmount, totalAmount = :newAmount + adminFee - discount, packageName = :packageName WHERE customerId = :customerId AND status = 'UNPAID'")
+    suspend fun updateUnpaidBillsForCustomer(customerId: Long, newAmount: Long, packageName: String)
 }
 
 

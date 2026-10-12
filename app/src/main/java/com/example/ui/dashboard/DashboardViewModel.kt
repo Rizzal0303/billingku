@@ -56,6 +56,9 @@ class DashboardViewModel(
     }
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.checkAndGenerateMonthlyBills()
+        }
         loadDashboardData()
     }
 
@@ -67,48 +70,55 @@ class DashboardViewModel(
             combine(
                 repository.getTotalRevenueByMonth(currentPeriod),
                 repository.allCustomers,
-                repository.allTransactions
-            ) { revenue, customers, transactions ->
-                val transactionsByCustomer = transactions.groupBy { it.customerId }
-                val currentMonthTrxs = transactions.filter { it.periodMonth.equals(currentPeriod, ignoreCase = true) }
-                val paidCustomerIdsCurrentMonth = currentMonthTrxs.map { it.customerId }.toSet()
+                repository.allTransactions,
+                repository.allBills
+            ) { revenue, customers, transactions, bills ->
+                val customerMap = customers.associateBy { it.id }
 
-                // Sertakan ACTIVE dan ISOLATED agar tidak hilang dari monitoring
-                val billableCustomers = customers.filter {
-                    it.status.equals("ACTIVE", ignoreCase = true) || it.status.equals("ISOLATED", ignoreCase = true)
-                }
+                // Membaca langsung dari tabel bills terpusat (UNPAID & PAID)
+                val unpaidBills = bills.filter { it.status.equals("UNPAID", ignoreCase = true) }
+                val paidBills = bills.filter { it.status.equals("PAID", ignoreCase = true) }
 
-                val paidCount = billableCustomers.count { paidCustomerIdsCurrentMonth.contains(it.id) }
-                val unpaidCount = billableCustomers.size - paidCount
+                val currentMonthUnpaidBills = unpaidBills.filter { it.periodMonth.equals(currentPeriod, ignoreCase = true) }
+                val currentMonthPaidBills = paidBills.filter { it.periodMonth.equals(currentPeriod, ignoreCase = true) }
+
+                val paidCustomerIdsCurrentMonth = currentMonthPaidBills.map { it.customerId }.toSet()
+                val unpaidCustomerIdsCurrentMonth = currentMonthUnpaidBills.map { it.customerId }.toSet()
+
+                val activeCustomers = customers.filter { it.status.equals("ACTIVE", ignoreCase = true) }
+                val isolatedCustomers = customers.filter { it.status.equals("ISOLATED", ignoreCase = true) }
+
+                val paidCount = paidCustomerIdsCurrentMonth.size
+                val unpaidCount = unpaidCustomerIdsCurrentMonth.size
 
                 val dueCustomersList = mutableListOf<CustomerEntity>()
                 val arrearsMap = mutableMapOf<Long, List<String>>()
                 val dueAmountMap = mutableMapOf<Long, Long>()
                 var totalArrearsSum = 0L
                 var multiMonthCount = 0
-                val isolatedCount = customers.count { it.status.equals("ISOLATED", ignoreCase = true) }
 
-                for (cust in billableCustomers) {
-                    val custTrxs = transactionsByCustomer[cust.id] ?: emptyList()
-                    val paidPeriods = custTrxs.map { it.periodMonth }.toSet()
+                // Kelompokkan tagihan UNPAID berdasarkan pelanggan
+                val unpaidBillsByCustomer = unpaidBills.groupBy { it.customerId }
 
-                    val eligiblePeriods = PeriodUtils.getEligiblePeriodsForCustomer(cust.createdAt, maxPastMonths = 6)
-                    val unpaidPeriods = eligiblePeriods.filter { !paidPeriods.contains(it) }
+                for ((custId, custUnpaids) in unpaidBillsByCustomer) {
+                    val cust = customerMap[custId] ?: continue
+                    if (!cust.status.equals("ACTIVE", ignoreCase = true) && !cust.status.equals("ISOLATED", ignoreCase = true)) {
+                        continue
+                    }
+                    val periods = custUnpaids.map { it.periodMonth }
+                    val amount = custUnpaids.sumOf { it.totalAmount }
 
-                    if (unpaidPeriods.isNotEmpty()) {
-                        dueCustomersList.add(cust)
-                        arrearsMap[cust.id] = unpaidPeriods
-                        val amount = unpaidPeriods.size * cust.monthlyFee
-                        dueAmountMap[cust.id] = amount
-                        totalArrearsSum += amount
-                        if (unpaidPeriods.size > 1) {
-                            multiMonthCount++
-                        }
+                    dueCustomersList.add(cust)
+                    arrearsMap[cust.id] = periods
+                    dueAmountMap[cust.id] = amount
+                    totalArrearsSum += amount
+
+                    if (periods.size > 1) {
+                        multiMonthCount++
                     }
                 }
 
-                // Urutkan prioritas penagihan: Terisolir duluan, lalu menunggak > 1 bulan, lalu jatuh tempo terdekat
-                val currentDay = Calendar.getInstance().get(Calendar.DAY_OF_MONTH)
+                // Urutkan prioritas penagihan: Terisolir duluan, lalu menunggak > 1 bulan, lalu jumlah tunggakan terbanyak, lalu jatuh tempo terdekat
                 dueCustomersList.sortWith(
                     compareByDescending<CustomerEntity> { it.status.equals("ISOLATED", ignoreCase = true) }
                         .thenByDescending { (arrearsMap[it.id]?.size ?: 0) > 1 }
@@ -118,13 +128,13 @@ class DashboardViewModel(
 
                 DashboardUiState(
                     totalRevenueMonth = revenue,
-                    activeCustomerCount = customers.count { it.status.equals("ACTIVE", ignoreCase = true) },
+                    activeCustomerCount = activeCustomers.size,
                     totalCustomerCount = customers.size,
                     paidCustomerCount = paidCount,
                     unpaidCustomerCount = maxOf(0, unpaidCount),
                     totalArrearsAmount = totalArrearsSum,
                     multiMonthArrearsCount = multiMonthCount,
-                    isolatedCustomerCount = isolatedCount,
+                    isolatedCustomerCount = isolatedCustomers.size,
                     recentTransactions = transactions.take(6),
                     dueCustomers = dueCustomersList,
                     customerArrearsMap = arrearsMap,

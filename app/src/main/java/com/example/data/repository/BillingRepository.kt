@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import com.example.data.local.AppDatabase
 import com.example.data.local.entity.AnnouncementEntity
+import com.example.data.local.entity.BillEntity
 import com.example.data.local.entity.CustomerEntity
 import com.example.data.local.entity.PackagePlanEntity
 import com.example.data.local.entity.SettlementBatchEntity
@@ -13,6 +14,12 @@ import java.util.Date
 import java.util.Locale
 
 class BillingRepository(private val db: AppDatabase) {
+    // Bills / Tagihan Terpusat (Room + MySQL)
+    val allBills: Flow<List<BillEntity>> = db.billDao().getAllBills()
+    val unpaidBills: Flow<List<BillEntity>> = db.billDao().getUnpaidBills()
+    val unpaidBillCount: Flow<Int> = db.billDao().getUnpaidBillCount()
+    val totalUnpaidAmount: Flow<Long> = db.billDao().getTotalUnpaidAmount()
+
     // Customers
     val allCustomers: Flow<List<CustomerEntity>> = db.customerDao().getAllCustomers()
     val activeCustomerCount: Flow<Int> = db.customerDao().getActiveCustomerCount()
@@ -54,7 +61,17 @@ class BillingRepository(private val db: AppDatabase) {
 
     suspend fun updateCustomer(customer: CustomerEntity) {
         db.customerDao().updateCustomer(customer)
+        // Perbarui nominal tagihan berjalan yang belum dibayar (UNPAID) untuk pelanggan ini
+        db.billDao().updateUnpaidBillsForCustomer(
+            customerId = customer.id,
+            newAmount = customer.monthlyFee,
+            packageName = customer.packageName
+        )
         syncDirectPush("CUSTOMER", customer.id, "UPSERT") { it.pushCustomer(customer) }
+        val updatedUnpaids = db.billDao().getUnpaidBillsSync().filter { it.customerId == customer.id }
+        for (bill in updatedUnpaids) {
+            syncDirectPush("BILL", bill.id, "UPSERT") { it.pushBill(bill) }
+        }
     }
 
     suspend fun deleteCustomer(customer: CustomerEntity) {
@@ -136,7 +153,172 @@ class BillingRepository(private val db: AppDatabase) {
                 }
             }
         }
+
+        // Sinkronkan status tagihan (bills) di database lokal & server
+        try {
+            val existingBill = db.billDao().getBillByCustomerAndPeriod(saved.customerId, saved.periodMonth)
+            if (existingBill != null) {
+                val updatedBill = existingBill.copy(
+                    status = "PAID",
+                    paidAt = saved.paidAt,
+                    paymentMethod = saved.paymentMethod,
+                    paidVia = if (saved.paymentMethod.equals("MANDIRI", ignoreCase = true)) "SELF_PAYMENT" else "CASHIER",
+                    cashierName = saved.cashierName,
+                    invoiceNumber = saved.invoiceNumber,
+                    notes = saved.notes
+                )
+                db.billDao().updateBill(updatedBill)
+                syncDirectPush("BILL", updatedBill.id, "UPSERT") { it.pushBill(updatedBill) }
+            } else {
+                val periodCode = try {
+                    com.example.util.PeriodUtils.parsePeriod(saved.periodMonth).let {
+                        SimpleDateFormat("yyyyMM", Locale.US).format(it.time)
+                    }
+                } catch (_: Exception) { "202610" }
+                val newBill = BillEntity(
+                    id = com.example.util.IdGenerator.generateUniqueId(),
+                    billCode = "BILL-${saved.customerCode}-$periodCode",
+                    customerId = saved.customerId,
+                    customerCode = saved.customerCode,
+                    customerName = saved.customerName,
+                    packageName = saved.packageName,
+                    periodMonth = saved.periodMonth,
+                    amount = saved.monthlyFee,
+                    adminFee = saved.adminFee,
+                    discount = saved.discount,
+                    totalAmount = saved.totalAmount,
+                    status = "PAID",
+                    paidAt = saved.paidAt,
+                    paymentMethod = saved.paymentMethod,
+                    paidVia = if (saved.paymentMethod.equals("MANDIRI", ignoreCase = true)) "SELF_PAYMENT" else "CASHIER",
+                    cashierName = saved.cashierName,
+                    invoiceNumber = saved.invoiceNumber,
+                    notes = saved.notes
+                )
+                db.billDao().insertBill(newBill)
+                syncDirectPush("BILL", newBill.id, "UPSERT") { it.pushBill(newBill) }
+            }
+        } catch (_: Exception) {
+            // Abaikan kesalahan non-fatal sinkronisasi tagihan
+        }
+
         return Result.success(saved.id)
+    }
+
+    // -------------------------------------------------------------
+    // OPERASI BILLS / TAGIHAN RESMI (ROOM & MYSQL)
+    // -------------------------------------------------------------
+    suspend fun getBillByCustomerAndPeriod(customerId: Long, periodMonth: String): BillEntity? =
+        db.billDao().getBillByCustomerAndPeriod(customerId, periodMonth)
+
+    suspend fun getBillById(id: Long): BillEntity? = db.billDao().getBillById(id)
+    suspend fun getBillByCode(code: String): BillEntity? = db.billDao().getBillByCode(code)
+
+    suspend fun insertBill(bill: BillEntity): Long {
+        val toSave = if (bill.id == 0L) bill.copy(id = com.example.util.IdGenerator.generateUniqueId()) else bill
+        db.billDao().insertBill(toSave)
+        syncDirectPush("BILL", toSave.id, "UPSERT") { it.pushBill(toSave) }
+        return toSave.id
+    }
+
+    suspend fun updateBill(bill: BillEntity) {
+        db.billDao().updateBill(bill)
+        syncDirectPush("BILL", bill.id, "UPSERT") { it.pushBill(bill) }
+    }
+
+    suspend fun deleteBill(bill: BillEntity) {
+        db.billDao().deleteBill(bill)
+        syncDirectPush("BILL", bill.id, "DELETE") { it.deleteBill(bill.id) }
+    }
+
+    suspend fun markBillAsPaid(
+        billId: Long,
+        paidAt: Long,
+        paymentMethod: String,
+        paidVia: String,
+        cashierName: String,
+        invoiceNumber: String
+    ) {
+        db.billDao().markBillAsPaid(billId, paidAt, paymentMethod, paidVia, cashierName, invoiceNumber)
+        val updated = db.billDao().getBillById(billId)
+        if (updated != null) {
+            syncDirectPush("BILL", updated.id, "UPSERT") { it.pushBill(updated) }
+        }
+    }
+
+    /**
+     * Otomatis menerbitkan tagihan awal bulan untuk semua pelanggan aktif
+     * Jika tagihan untuk periode tersebut sudah ada di database, tagihan tidak akan diduplikasi.
+     */
+    suspend fun generateMonthlyBillsForPeriod(
+        periodMonth: String,
+        defaultAdminFee: Long = 0L
+    ): Result<Int> {
+        val allCust = db.customerDao().getAllCustomersSync()
+        val billableCustomers = allCust.filter {
+            it.status.equals("ACTIVE", ignoreCase = true) || it.status.equals("ISOLATED", ignoreCase = true)
+        }
+
+        if (billableCustomers.isEmpty()) {
+            return Result.success(0)
+        }
+
+        val periodCal = com.example.util.PeriodUtils.parsePeriod(periodMonth)
+        val periodCode = SimpleDateFormat("yyyyMM", Locale.US).format(periodCal.time)
+        var generatedCount = 0
+
+        for (cust in billableCustomers) {
+            // Cek apakah tagihan di database sudah ada
+            val existing = db.billDao().getBillByCustomerAndPeriod(cust.id, periodMonth)
+            if (existing != null) continue
+
+            // Cek apakah transaksi sudah dibayar sebelumnya
+            val existingTrx = db.transactionDao().findTransactionForPeriod(cust.id, periodMonth)
+            val isPaid = existingTrx != null
+
+            val dueCal = periodCal.clone() as java.util.Calendar
+            dueCal.set(java.util.Calendar.DAY_OF_MONTH, cust.dueDay.coerceIn(1, 28))
+            dueCal.set(java.util.Calendar.HOUR_OF_DAY, 23)
+            dueCal.set(java.util.Calendar.MINUTE, 59)
+
+            val total = cust.monthlyFee + defaultAdminFee
+            val billCode = "BILL-${cust.customerCode}-$periodCode"
+
+            val bill = BillEntity(
+                id = com.example.util.IdGenerator.generateUniqueId(),
+                billCode = billCode,
+                customerId = cust.id,
+                customerCode = cust.customerCode,
+                customerName = cust.name,
+                packageId = cust.packageId,
+                packageName = cust.packageName,
+                periodMonth = periodMonth,
+                dueDate = dueCal.timeInMillis,
+                amount = cust.monthlyFee,
+                adminFee = defaultAdminFee,
+                discount = 0L,
+                totalAmount = total,
+                status = if (isPaid) "PAID" else "UNPAID",
+                createdAt = System.currentTimeMillis(),
+                paidAt = existingTrx?.paidAt,
+                paymentMethod = existingTrx?.paymentMethod ?: "",
+                paidVia = if (isPaid) "CASHIER" else "",
+                cashierName = existingTrx?.cashierName ?: "",
+                invoiceNumber = existingTrx?.invoiceNumber,
+                notes = if (isPaid) "Lunas via Kasir" else "Tagihan otomatis awal bulan"
+            )
+
+            db.billDao().insertBill(bill)
+            syncDirectPush("BILL", bill.id, "UPSERT") { it.pushBill(bill) }
+            generatedCount++
+        }
+
+        return Result.success(generatedCount)
+    }
+
+    suspend fun checkAndGenerateMonthlyBills(): Result<Int> {
+        val currentPeriod = getCurrentMonthPeriod()
+        return generateMonthlyBillsForPeriod(currentPeriod)
     }
 
     suspend fun insertMultipleTransactions(transactions: List<TransactionEntity>): Result<List<Long>> {

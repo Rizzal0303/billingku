@@ -34,7 +34,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.printer.EscPosHelper
-import com.example.ui.components.AdminPinPromptDialog
 import com.example.ui.components.PullRefreshWrapper
 import com.example.ui.components.ReceiptPreviewDialog
 import com.example.ui.components.SwipeToConfirmButton
@@ -55,7 +54,6 @@ fun CashierScreen(
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     var showReceiptModal by remember { mutableStateOf(false) }
-    var showMassBillingAdminPinDialog by remember { mutableStateOf(false) }
 
     val currentDay = remember { Calendar.getInstance().get(Calendar.DAY_OF_MONTH) }
     val filteredBillCards = uiState.filteredBillCards
@@ -69,19 +67,6 @@ fun CashierScreen(
             viewModel.closeCheckoutModal()
             showReceiptModal = true
         }
-    }
-
-    if (showMassBillingAdminPinDialog) {
-        AdminPinPromptDialog(
-            actionTitle = "Otorisasi Tagihan Masal",
-            actionDescription = "Penagihan masal otomatis bulanan memerlukan hak akses Administrator. Masukkan PIN Admin:",
-            onDismiss = { showMassBillingAdminPinDialog = false },
-            onVerify = { pin -> onVerifyAdminPin?.invoke(pin) ?: false },
-            onSuccess = {
-                showMassBillingAdminPinDialog = false
-                viewModel.openAutoMassBillingModal()
-            }
-        )
     }
 
     if (uiState.errorMessage != null) {
@@ -164,38 +149,7 @@ fun CashierScreen(
                         )
                     }
                 },
-                actions = {
-                    FilledTonalButton(
-                        onClick = {
-                            if (isAdmin) {
-                                viewModel.openAutoMassBillingModal()
-                            } else {
-                                showMassBillingAdminPinDialog = true
-                            }
-                        },
-                        colors = ButtonDefaults.filledTonalButtonColors(
-                            containerColor = BluePrimaryLight,
-                            contentColor = BluePrimary
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                        modifier = Modifier
-                            .padding(end = 12.dp)
-                            .testTag("btn_auto_mass_billing")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Bolt,
-                            contentDescription = null,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = if (isAdmin) "Tagihan Masal" else "Masal 🔒",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                },
+                actions = {},
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Slate50)
             )
         },
@@ -1155,60 +1109,6 @@ fun CashierScreen(
             receiptData = uiState.lastCompletedReceipt!!,
             onDismiss = { showReceiptModal = false },
             onPrintAgain = { viewModel.reprintLastReceipt() }
-        )
-    }
-
-    // Modal Tagihan Masal Otomatis
-    if (uiState.isAutoMassBillingModalOpen) {
-        AlertDialog(
-            onDismissRequest = { viewModel.closeAutoMassBillingModal() },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(imageVector = Icons.Default.Bolt, contentDescription = null, tint = BluePrimary)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Tagihan Masal Awal Bulan", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                }
-            },
-            text = {
-                val currentBills = uiState.allBillCards.filter { it.isCurrentMonth }
-                val totalFee = currentBills.sumOf { it.fee + uiState.massBillingAdminFee }
-
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = "Fitur ini akan menyiapkan cetak nota tagihan serentak untuk semua pelanggan pada periode ${uiState.currentPeriod}.",
-                        fontSize = 12.sp,
-                        color = Slate600
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = Slate100,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text("Target Pelanggan: ${currentBills.size} Pelanggan", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                            Text("Total Estimasi: ${EscPosHelper.formatRupiah(totalFee)}", color = BluePrimary, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.executeGenerateAutoMonthlyBills()
-                        viewModel.printBatchMassReceipts()
-                        viewModel.closeAutoMassBillingModal()
-                        Toast.makeText(context, "Mencetak nota massal...", Toast.LENGTH_SHORT).show()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = BluePrimary)
-                ) {
-                    Text("Cetak Semua Nota", fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.closeAutoMassBillingModal() }) {
-                    Text("Batal")
-                }
-            }
         )
     }
 }

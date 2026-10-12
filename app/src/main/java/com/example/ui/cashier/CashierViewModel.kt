@@ -15,13 +15,6 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
-data class MassBillingResult(
-    val period: String,
-    val count: Int,
-    val totalAmount: Long,
-    val customers: List<CustomerEntity>
-)
-
 /**
  * Setiap tagihan bulanan yang belum dibayar menjadi 1 kartu tersendiri.
  * Contoh: Jika seorang pelanggan menunggak bulan lalu dan belum bayar bulan ini,
@@ -63,11 +56,6 @@ data class CashierUiState(
     val lastCompletedReceipt: EscPosHelper.ReceiptData? = null,
     val errorMessage: String? = null,
     val autoRestoredFromIsolated: Boolean = false,
-    // Automatic Monthly Mass Billing State
-    val isAutoMassBillingModalOpen: Boolean = false,
-    val massBillingAdminFee: Long = 2500,
-    val isMassBillingProcessing: Boolean = false,
-    val massBillingResult: MassBillingResult? = null,
     val isRefreshing: Boolean = false
 )
 
@@ -497,81 +485,6 @@ class CashierViewModel(
         val receipt = _uiState.value.lastCompletedReceipt ?: return
         viewModelScope.launch {
             printerManager.printReceipt(receipt)
-        }
-    }
-
-    // --- FITUR GENERATE TAGIHAN OTOMATIS AWAL BULAN MASAL ---
-    fun openAutoMassBillingModal() {
-        _uiState.update {
-            it.copy(
-                isAutoMassBillingModalOpen = true,
-                massBillingResult = null
-            )
-        }
-    }
-
-    fun closeAutoMassBillingModal() {
-        _uiState.update {
-            it.copy(
-                isAutoMassBillingModalOpen = false,
-                massBillingResult = null
-            )
-        }
-    }
-
-    fun setMassBillingAdminFee(fee: Long) {
-        _uiState.update { it.copy(massBillingAdminFee = fee) }
-    }
-
-    fun executeGenerateAutoMonthlyBills() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isMassBillingProcessing = true) }
-            val state = _uiState.value
-            val targetBills = state.allBillCards.filter { it.isCurrentMonth }
-            val period = state.currentPeriod
-            val totalAmount = targetBills.sumOf { it.fee + state.massBillingAdminFee }
-
-            val result = MassBillingResult(
-                period = period,
-                count = targetBills.size,
-                totalAmount = totalAmount,
-                customers = targetBills.map { it.customer }
-            )
-
-            _uiState.update {
-                it.copy(
-                    isMassBillingProcessing = false,
-                    massBillingResult = result
-                )
-            }
-        }
-    }
-
-    fun printBatchMassReceipts() {
-        val result = _uiState.value.massBillingResult ?: return
-        viewModelScope.launch {
-            result.customers.forEach { customer ->
-                val receipt = EscPosHelper.ReceiptData(
-                    businessName = printerManager.getBusinessName(),
-                    businessAddress = printerManager.getBusinessAddress(),
-                    businessPhone = printerManager.getBusinessPhone(),
-                    invoiceNo = "TAG-${customer.customerCode}-${result.period.take(3).uppercase()}",
-                    customerName = customer.name,
-                    customerCode = customer.customerCode,
-                    packageName = customer.packageName,
-                    odpLocation = customer.odpLocation,
-                    period = result.period,
-                    monthlyFee = customer.monthlyFee,
-                    adminFee = _uiState.value.massBillingAdminFee,
-                    discount = 0,
-                    totalAmount = customer.monthlyFee + _uiState.value.massBillingAdminFee,
-                    paymentMethod = "MENUNGGU PEMBAYARAN",
-                    cashierName = _uiState.value.selectedStaff?.name ?: "Sistem Billingku",
-                    template = printerManager.getReceiptTemplate(),
-                    footerMessage = "Harap lakukan pembayaran sebelum jatuh tempo tgl ${customer.dueDay}. Terima kasih."
-                )
-                printerManager.printReceipt(receipt)
-            }
         }
     }
 }

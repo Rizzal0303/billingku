@@ -368,15 +368,20 @@ fun EditAdminProfileDialog(
                                 errorMessage = "Username login tidak boleh kosong!"
                                 return@Button
                             }
-                            if (pin.length < 4) {
-                                errorMessage = "PIN harus terdiri dari minimal 4 digit angka!"
-                                return@Button
+                            val effectivePin = if (pin.isNotBlank() || confirmPin.isNotBlank()) {
+                                if (pin.length < 4) {
+                                    errorMessage = "PIN harus terdiri dari minimal 4 digit angka!"
+                                    return@Button
+                                }
+                                if (pin != confirmPin) {
+                                    errorMessage = "Konfirmasi PIN tidak cocok dengan PIN baru!"
+                                    return@Button
+                                }
+                                pin.trim()
+                            } else {
+                                staff.pin
                             }
-                            if (pin != confirmPin) {
-                                errorMessage = "Konfirmasi PIN tidak cocok dengan PIN baru!"
-                                return@Button
-                            }
-                            onSave(trimmedName, trimmedUsername, phone.trim(), pin.trim())
+                            onSave(trimmedName, trimmedUsername, phone.trim(), effectivePin)
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F46E5)),
                         shape = RoundedCornerShape(12.dp),

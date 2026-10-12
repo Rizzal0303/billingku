@@ -152,6 +152,9 @@ fun BillingkuApp() {
     }
 
     LaunchedEffect(Unit) {
+        coroutineScope.launch(Dispatchers.IO) {
+            repository.checkAndGenerateMonthlyBills()
+        }
         delay(2500)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             bluetoothPermissionLauncher.launch(

@@ -144,4 +144,40 @@ data class AnnouncementEntity(
     val updatedAt: Long = System.currentTimeMillis()
 )
 
+@Entity(
+    tableName = "bills",
+    indices = [
+        Index(value = ["billCode"], unique = true),
+        Index(value = ["customerId"]),
+        Index(value = ["customerCode"]),
+        Index(value = ["periodMonth"]),
+        Index(value = ["status"]),
+        Index(value = ["customerId", "periodMonth"], unique = true)
+    ]
+)
+data class BillEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val billCode: String, // e.g. "BILL-NET001-202610"
+    val customerId: Long,
+    val customerCode: String,
+    val customerName: String,
+    val packageId: Long = 0,
+    val packageName: String = "",
+    val periodMonth: String, // e.g. "Oktober 2026"
+    val dueDate: Long = 0, // Tanggal jatuh tempo epoch millis
+    val amount: Long, // Nominal paket
+    val adminFee: Long = 0,
+    val discount: Long = 0,
+    val totalAmount: Long, // amount + adminFee - discount
+    val status: String = "UNPAID", // "UNPAID", "PAID", "CANCELLED"
+    val createdAt: Long = System.currentTimeMillis(),
+    val paidAt: Long? = null,
+    val paymentMethod: String = "", // "TUNAI", "TRANSFER", "QRIS", "MANDIRI"
+    val paidVia: String = "", // "CASHIER", "SELF_PAYMENT", "ONLINE"
+    val cashierName: String = "",
+    val invoiceNumber: String? = null,
+    val notes: String = ""
+)
+
 

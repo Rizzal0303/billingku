@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.example.data.local.AppDatabase
 import com.example.data.local.entity.AnnouncementEntity
+import com.example.data.local.entity.BillEntity
 import com.example.data.local.entity.CustomerEntity
 import com.example.data.local.entity.PackagePlanEntity
 import com.example.data.local.entity.SettlementBatchEntity
@@ -230,6 +231,7 @@ class MysqlSyncManager(
             val transactions = db.transactionDao().getAllTransactionsSync()
             val settlements = db.settlementDao().getAllSettlementBatchesSync()
             val staff = db.staffDao().getAllStaffSync()
+            val bills = db.billDao().getAllBillsSync()
 
             // Susun JSON Payload
             val rootJson = JSONObject()
@@ -336,6 +338,35 @@ class MysqlSyncManager(
             }
             dataJson.put("staff", staffArray)
 
+            // 6. Bills (Tagihan Resmi Pelanggan)
+            val billsArray = JSONArray()
+            for (b in bills) {
+                val obj = JSONObject()
+                obj.put("id", b.id)
+                obj.put("billCode", b.billCode)
+                obj.put("customerId", b.customerId)
+                obj.put("customerCode", b.customerCode)
+                obj.put("customerName", b.customerName)
+                obj.put("packageId", b.packageId)
+                obj.put("packageName", b.packageName)
+                obj.put("periodMonth", b.periodMonth)
+                obj.put("dueDate", b.dueDate)
+                obj.put("amount", b.amount)
+                obj.put("adminFee", b.adminFee)
+                obj.put("discount", b.discount)
+                obj.put("totalAmount", b.totalAmount)
+                obj.put("status", b.status)
+                obj.put("createdAt", b.createdAt)
+                if (b.paidAt != null) obj.put("paidAt", b.paidAt)
+                obj.put("paymentMethod", b.paymentMethod)
+                obj.put("paidVia", b.paidVia)
+                obj.put("cashierName", b.cashierName)
+                if (b.invoiceNumber != null) obj.put("invoiceNumber", b.invoiceNumber)
+                obj.put("notes", b.notes)
+                billsArray.put(obj)
+            }
+            dataJson.put("bills", billsArray)
+
             rootJson.put("data", dataJson)
 
             val syncUrl = buildUrl("sync_all")
@@ -361,7 +392,7 @@ class MysqlSyncManager(
             val resJson = JSONObject(responseText)
             if (resJson.optString("status") == "success") {
                 val now = System.currentTimeMillis()
-                val summary = "Sukses upload: ${customers.size} Pelanggan, ${packages.size} Paket, ${transactions.size} Transaksi, ${settlements.size} Setoran"
+                val summary = "Sukses upload: ${customers.size} Pelanggan, ${packages.size} Paket, ${bills.size} Tagihan, ${transactions.size} Transaksi, ${settlements.size} Setoran"
                 setLastSyncTimestamp(now)
                 setLastSyncStatus(summary)
                 Result.success(summary)
@@ -417,6 +448,7 @@ class MysqlSyncManager(
             val pendingTransactionIds = pendingList.filter { it.entityType == "TRANSACTION" }.map { it.entityId }.toSet()
             val pendingSettlementIds = pendingList.filter { it.entityType == "SETTLEMENT" }.map { it.entityId }.toSet()
             val pendingStaffIds = pendingList.filter { it.entityType == "STAFF" }.map { it.entityId }.toSet()
+            val pendingBillIds = pendingList.filter { it.entityType == "BILL" }.map { it.entityId }.toSet()
 
             // 1. Parse & Simpan Customers
             val customersArray = data.optJSONArray("customers")
@@ -595,8 +627,52 @@ class MysqlSyncManager(
                 }
             }
 
+            // 6. Parse & Simpan Bills (Tagihan Resmi Terpusat)
+            val billsArray = data.optJSONArray("bills")
+            val billList = mutableListOf<BillEntity>()
+            if (billsArray != null) {
+                for (i in 0 until billsArray.length()) {
+                    val obj = billsArray.getJSONObject(i)
+                    billList.add(
+                        BillEntity(
+                            id = obj.optLong("id"),
+                            billCode = obj.optString("billCode"),
+                            customerId = obj.optLong("customerId"),
+                            customerCode = obj.optString("customerCode"),
+                            customerName = obj.optString("customerName"),
+                            packageId = obj.optLong("packageId"),
+                            packageName = obj.optString("packageName"),
+                            periodMonth = obj.optString("periodMonth"),
+                            dueDate = obj.optLong("dueDate"),
+                            amount = obj.optLong("amount"),
+                            adminFee = obj.optLong("adminFee"),
+                            discount = obj.optLong("discount"),
+                            totalAmount = obj.optLong("totalAmount"),
+                            status = obj.optString("status", "UNPAID"),
+                            createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
+                            paidAt = if (obj.has("paidAt") && !obj.isNull("paidAt")) obj.optLong("paidAt") else null,
+                            paymentMethod = obj.optString("paymentMethod", ""),
+                            paidVia = obj.optString("paidVia", ""),
+                            cashierName = obj.optString("cashierName", ""),
+                            invoiceNumber = if (obj.has("invoiceNumber") && !obj.isNull("invoiceNumber")) obj.optString("invoiceNumber") else null,
+                            notes = obj.optString("notes", "")
+                        )
+                    )
+                }
+                val safeToInsert = billList.filter { it.id !in pendingBillIds }
+                if (safeToInsert.isNotEmpty()) {
+                    db.billDao().insertBills(safeToInsert)
+                }
+                val keepIds = (billList.map { it.id } + pendingBillIds).distinct()
+                if (keepIds.isNotEmpty()) {
+                    db.billDao().deleteBillsNotIn(keepIds)
+                } else if (pendingBillIds.isEmpty()) {
+                    db.billDao().clearAllBills()
+                }
+            }
+
             val now = System.currentTimeMillis()
-            val summary = "Sukses unduh: ${customerList.size} Pelanggan, ${packageList.size} Paket, ${transactionList.size} Transaksi, ${settlementList.size} Setoran"
+            val summary = "Sukses unduh: ${customerList.size} Pelanggan, ${packageList.size} Paket, ${billList.size} Tagihan, ${transactionList.size} Transaksi, ${settlementList.size} Setoran"
             setLastSyncTimestamp(now)
             setLastSyncStatus(summary)
 
@@ -854,6 +930,46 @@ class MysqlSyncManager(
         return if (base.isNotBlank()) "$base?action=get_announcements" else "https://your-domain.com/billingku.php?action=get_announcements"
     }
 
+    suspend fun pushBill(b: BillEntity): Result<Boolean> = withContext(Dispatchers.IO) {
+        val rootJson = JSONObject().apply {
+            put("action", "push_bill")
+            put("api_key", getApiKey())
+            put("data", JSONObject().apply {
+                put("id", b.id)
+                put("billCode", b.billCode)
+                put("customerId", b.customerId)
+                put("customerCode", b.customerCode)
+                put("customerName", b.customerName)
+                put("packageId", b.packageId)
+                put("packageName", b.packageName)
+                put("periodMonth", b.periodMonth)
+                put("dueDate", b.dueDate)
+                put("amount", b.amount)
+                put("adminFee", b.adminFee)
+                put("discount", b.discount)
+                put("totalAmount", b.totalAmount)
+                put("status", b.status)
+                put("createdAt", b.createdAt)
+                if (b.paidAt != null) put("paidAt", b.paidAt)
+                put("paymentMethod", b.paymentMethod)
+                put("paidVia", b.paidVia)
+                put("cashierName", b.cashierName)
+                if (b.invoiceNumber != null) put("invoiceNumber", b.invoiceNumber)
+                put("notes", b.notes)
+            })
+        }
+        executeSyncPost("push_bill", rootJson, "✓ Tagihan ${b.billCode} (${b.customerName}) tersinkron ke server")
+    }
+
+    suspend fun deleteBill(id: Long): Result<Boolean> = withContext(Dispatchers.IO) {
+        val rootJson = JSONObject().apply {
+            put("action", "delete_bill")
+            put("api_key", getApiKey())
+            put("id", id)
+        }
+        executeSyncPost("delete_bill", rootJson, "✓ Tagihan (ID $id) dihapus dari server")
+    }
+
     // ------------------------------------------------------------------------
     // OFFLINE SYNC QUEUE MANAGEMENT
     // ------------------------------------------------------------------------
@@ -924,6 +1040,14 @@ class MysqlSyncManager(
                             if (a != null) pushAnnouncement(a).isSuccess else deleteRemoteAnnouncement(item.entityId).isSuccess
                         } else {
                             deleteRemoteAnnouncement(item.entityId).isSuccess
+                        }
+                    }
+                    "BILL" -> {
+                        if (item.action == "UPSERT") {
+                            val b = db.billDao().getBillById(item.entityId)
+                            if (b != null) pushBill(b).isSuccess else deleteBill(item.entityId).isSuccess
+                        } else {
+                            deleteBill(item.entityId).isSuccess
                         }
                     }
                     else -> true

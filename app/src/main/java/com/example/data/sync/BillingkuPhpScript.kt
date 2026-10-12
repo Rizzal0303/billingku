@@ -31,7 +31,7 @@ if (${'$'}_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 // -------------------------------------------------------------
 // 1. KONFIGURASI DATABASE MYSQL & KEAMANAN
-// Silakan sesuaikan dengan kredensial database Anda
+// Mendukung file config.php terpusat jika tersedia, atau konfigurasi manual di bawah ini
 // -------------------------------------------------------------
 ${'$'}db_host = 'localhost';
 ${'$'}db_name = 'billingku_db';     // Nama database MySQL Anda
@@ -39,22 +39,34 @@ ${'$'}db_user = 'root';              // Username database MySQL Anda
 ${'$'}db_pass = '';                  // Password database MySQL Anda
 ${'$'}api_key = 'billingku_secret';  // Samakan dengan API Key di Pengaturan Aplikasi
 
+if (file_exists(__DIR__ . '/config.php')) {
+    require_once __DIR__ . '/config.php';
+    if (function_exists('getDbConnection')) {
+        ${'$'}pdo = getDbConnection();
+    }
+    if (defined('API_KEY')) {
+        ${'$'}api_key = API_KEY;
+    }
+}
+
 // -------------------------------------------------------------
-// 2. KONEKSI KE DATABASE (PDO)
+// 2. KONEKSI KE DATABASE (PDO) JIKA BELUM TERINISIALISASI
 // -------------------------------------------------------------
-try {
-    ${'$'}pdo = new PDO("mysql:host={${'$'}db_host};dbname={${'$'}db_name};charset=utf8mb4", ${'$'}db_user, ${'$'}db_pass, [
-        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES   => false,
-    ]);
-} catch (PDOException ${'$'}e) {
-    echo json_encode([
-        'status'  => 'error',
-        'code'    => 500,
-        'message' => 'Gagal terkoneksi ke database MySQL: ' . ${'$'}e->getMessage()
-    ]);
-    exit();
+if (!isset(${'$'}pdo) || !(${'$'}pdo instanceof PDO)) {
+    try {
+        ${'$'}pdo = new PDO("mysql:host={${'$'}db_host};dbname={${'$'}db_name};charset=utf8mb4", ${'$'}db_user, ${'$'}db_pass, [
+            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES   => false,
+        ]);
+    } catch (PDOException ${'$'}e) {
+        echo json_encode([
+            'status'  => 'error',
+            'code'    => 500,
+            'message' => 'Gagal terkoneksi ke database MySQL: ' . ${'$'}e->getMessage()
+        ]);
+        exit();
+    }
 }
 
 // -------------------------------------------------------------
@@ -174,6 +186,41 @@ function initTables(${'$'}pdo) {
         INDEX (`category`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
+    // Tabel Tagihan Resmi (Bills / Invoices) - Terpusat untuk Aplikasi Kasir & Aplikasi Pembayaran Mandiri
+    ${'$'}pdo->exec("CREATE TABLE IF NOT EXISTS `bills` (
+        `id` BIGINT NOT NULL PRIMARY KEY,
+        `billCode` VARCHAR(60) NOT NULL,
+        `customerId` BIGINT NOT NULL,
+        `customerCode` VARCHAR(50) NOT NULL,
+        `customerName` VARCHAR(150) NOT NULL,
+        `packageId` BIGINT DEFAULT 0,
+        `packageName` VARCHAR(100) DEFAULT '',
+        `periodMonth` VARCHAR(60) NOT NULL,
+        `dueDate` BIGINT DEFAULT 0,
+        `amount` BIGINT NOT NULL,
+        `adminFee` BIGINT DEFAULT 0,
+        `discount` BIGINT DEFAULT 0,
+        `totalAmount` BIGINT NOT NULL,
+        `status` VARCHAR(30) DEFAULT 'UNPAID',
+        `createdAt` BIGINT NOT NULL,
+        `paidAt` BIGINT NULL,
+        `paymentMethod` VARCHAR(50) DEFAULT '',
+        `paidVia` VARCHAR(50) DEFAULT '',
+        `cashierName` VARCHAR(100) DEFAULT '',
+        `invoiceNumber` VARCHAR(60) DEFAULT '',
+        `notes` TEXT,
+        `updatedAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX (`billCode`),
+        INDEX (`status`),
+        INDEX (`periodMonth`),
+        INDEX (`customerId`),
+        INDEX (`customerCode`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    try {
+        ${'$'}pdo->exec("ALTER TABLE `bills` ADD UNIQUE INDEX `uq_cust_period_bill` (`customerId`, `periodMonth`);");
+    } catch (Exception ${'$'}e) {}
+
     // Pastikan kolom-kolom baru tersedia pada instalasi database lama (Safe Column Migrations)
     try { ${'$'}pdo->exec("ALTER TABLE `staff_members` MODIFY COLUMN `pin` VARCHAR(255) DEFAULT '1234'"); } catch (Exception ${'$'}e) {}
     try { ${'$'}pdo->exec("ALTER TABLE `customers` ADD COLUMN `odpLocation` VARCHAR(150) DEFAULT '' AFTER `address`"); } catch (Exception ${'$'}e) {}
@@ -208,6 +255,52 @@ if (empty(${'$'}req_key) && isset(${'$'}_SERVER['HTTP_AUTHORIZATION'])) {
 ${'$'}action = ${'$'}_GET['action'] ?? (${'$'}_POST['action'] ?? '');
 if (empty(${'$'}action) && is_array(${'$'}jsonData) && isset(${'$'}jsonData['action'])) {
     ${'$'}action = ${'$'}jsonData['action'];
+}
+
+if (${'$'}action === 'get_admin_contact') {
+    try {
+        ${'$'}stmt = ${'$'}pdo->query("
+            SELECT `name`, `phone`, `role` 
+            FROM `staff_members` 
+            WHERE UPPER(`role`) IN ('OWNER', 'ADMIN') 
+              AND `isActive` = 1 
+              AND `phone` IS NOT NULL 
+              AND TRIM(`phone`) != '' 
+            ORDER BY (CASE WHEN UPPER(`role`) = 'OWNER' THEN 1 ELSE 2 END), `id` ASC 
+            LIMIT 1
+        ");
+        ${'$'}admin = ${'$'}stmt->fetch();
+        ${'$'}adminPhone = (${'$'}admin && !empty(trim(${'$'}admin['phone']))) ? trim(${'$'}admin['phone']) : '6281584210833';
+
+        echo json_encode([
+            'status'     => 'success',
+            'code'       => 200,
+            'message'    => 'Kontak admin/owner berhasil diambil',
+            'phone'      => ${'$'}adminPhone,
+            'adminPhone' => ${'$'}adminPhone,
+            'data'       => [
+                'phone'       => ${'$'}adminPhone,
+                'admin_phone' => ${'$'}adminPhone,
+                'name'        => ${'$'}admin['name'] ?? 'Admin Netplus',
+                'role'        => ${'$'}admin['role'] ?? 'ADMIN'
+            ]
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        exit();
+    } catch (Exception ${'$'}e) {
+        echo json_encode([
+            'status'     => 'success',
+            'code'       => 200,
+            'phone'      => '6281584210833',
+            'adminPhone' => '6281584210833',
+            'data'       => [
+                'phone'       => '6281584210833',
+                'admin_phone' => '6281584210833',
+                'name'        => 'Admin Netplus',
+                'role'        => 'ADMIN'
+            ]
+        ]);
+        exit();
+    }
 }
 
 if (${'$'}action !== 'ping' && !empty(${'$'}action)) {
@@ -258,7 +351,8 @@ if (${'$'}action === 'sync_all' || ${'$'}action === 'upload_all') {
             'packages'     => 0,
             'transactions' => 0,
             'settlements'  => 0,
-            'staff'        => 0
+            'staff'        => 0,
+            'bills'        => 0
         ];
 
         if (!empty(${'$'}data['customers']) && is_array(${'$'}data['customers'])) {
@@ -420,6 +514,58 @@ if (${'$'}action === 'sync_all' || ${'$'}action === 'upload_all') {
             }
         }
 
+        if (!empty(${'$'}data['bills']) && is_array(${'$'}data['bills'])) {
+            ${'$'}stmt = ${'$'}pdo->prepare("INSERT INTO `bills`
+                (`id`, `billCode`, `customerId`, `customerCode`, `customerName`, `packageId`, `packageName`,
+                 `periodMonth`, `dueDate`, `amount`, `adminFee`, `discount`, `totalAmount`, `status`,
+                 `createdAt`, `paidAt`, `paymentMethod`, `paidVia`, `cashierName`, `invoiceNumber`, `notes`)
+                VALUES (:id, :billCode, :customerId, :customerCode, :customerName, :packageId, :packageName,
+                 :periodMonth, :dueDate, :amount, :adminFee, :discount, :totalAmount, :status,
+                 :createdAt, :paidAt, :paymentMethod, :paidVia, :cashierName, :invoiceNumber, :notes)
+                ON DUPLICATE KEY UPDATE
+                `customerName` = VALUES(`customerName`),
+                `packageName`  = VALUES(`packageName`),
+                `dueDate`      = VALUES(`dueDate`),
+                `amount`       = VALUES(`amount`),
+                `adminFee`     = VALUES(`adminFee`),
+                `discount`     = VALUES(`discount`),
+                `totalAmount`  = VALUES(`totalAmount`),
+                `status`       = VALUES(`status`),
+                `paidAt`       = VALUES(`paidAt`),
+                `paymentMethod`= VALUES(`paymentMethod`),
+                `paidVia`      = VALUES(`paidVia`),
+                `cashierName`  = VALUES(`cashierName`),
+                `invoiceNumber`= VALUES(`invoiceNumber`),
+                `notes`        = VALUES(`notes`);");
+
+            foreach (${'$'}data['bills'] as ${'$'}b) {
+                ${'$'}stmt->execute([
+                    ':id'           => ${'$'}b['id'],
+                    ':billCode'     => ${'$'}b['billCode'] ?? '',
+                    ':customerId'   => ${'$'}b['customerId'],
+                    ':customerCode' => ${'$'}b['customerCode'] ?? '',
+                    ':customerName' => ${'$'}b['customerName'] ?? '',
+                    ':packageId'    => ${'$'}b['packageId'] ?? 0,
+                    ':packageName'  => ${'$'}b['packageName'] ?? '',
+                    ':periodMonth'  => ${'$'}b['periodMonth'] ?? '',
+                    ':dueDate'      => ${'$'}b['dueDate'] ?? 0,
+                    ':amount'       => ${'$'}b['amount'] ?? 0,
+                    ':adminFee'     => ${'$'}b['adminFee'] ?? 0,
+                    ':discount'     => ${'$'}b['discount'] ?? 0,
+                    ':totalAmount'  => ${'$'}b['totalAmount'] ?? 0,
+                    ':status'       => ${'$'}b['status'] ?? 'UNPAID',
+                    ':createdAt'    => ${'$'}b['createdAt'] ?? round(microtime(true) * 1000),
+                    ':paidAt'       => ${'$'}b['paidAt'] ?? null,
+                    ':paymentMethod'=> ${'$'}b['paymentMethod'] ?? '',
+                    ':paidVia'      => ${'$'}b['paidVia'] ?? '',
+                    ':cashierName'  => ${'$'}b['cashierName'] ?? '',
+                    ':invoiceNumber'=> ${'$'}b['invoiceNumber'] ?? '',
+                    ':notes'        => ${'$'}b['notes'] ?? ''
+                ]);
+                ${'$'}stats['bills']++;
+            }
+        }
+
         ${'$'}pdo->commit();
 
         echo json_encode([
@@ -448,8 +594,9 @@ if (${'$'}action === 'download_all' || ${'$'}action === 'get_all') {
         ${'$'}transactions= ${'$'}pdo->query("SELECT * FROM `transactions` ORDER BY `paidAt` DESC")->fetchAll();
         ${'$'}settlements = ${'$'}pdo->query("SELECT * FROM `settlement_batches` ORDER BY `createdAt` DESC")->fetchAll();
         ${'$'}staff       = ${'$'}pdo->query("SELECT * FROM `staff_members` ORDER BY `name` ASC")->fetchAll();
+        ${'$'}bills       = ${'$'}pdo->query("SELECT * FROM `bills` ORDER BY `dueDate` ASC, `id` ASC")->fetchAll();
 
-        // Konversi tipe data boolean dan integer kecil yang aman (mencegah integer overflow pada ID 64-bit dan Timestamp di PHP 32-bit)
+        // Konversi tipe data boolean dan integer kecil yang aman
         foreach (${'$'}packages as &${'$'}p) {
             ${'$'}p['speedMbps'] = (int)${'$'}p['speedMbps'];
             ${'$'}p['isActive'] = (bool)${'$'}p['isActive'];
@@ -476,14 +623,16 @@ if (${'$'}action === 'download_all' || ${'$'}action === 'get_all') {
                 'packages'           => ${'$'}packages,
                 'transactions'       => ${'$'}transactions,
                 'settlement_batches' => ${'$'}settlements,
-                'staff'              => ${'$'}staff
+                'staff'              => ${'$'}staff,
+                'bills'              => ${'$'}bills
             ],
             'counts' => [
                 'customers'    => count(${'$'}customers),
                 'packages'     => count(${'$'}packages),
                 'transactions' => count(${'$'}transactions),
                 'settlements'  => count(${'$'}settlements),
-                'staff'        => count(${'$'}staff)
+                'staff'        => count(${'$'}staff),
+                'bills'        => count(${'$'}bills)
             ]
         ]);
         exit();
@@ -585,6 +734,26 @@ if (${'$'}action === 'push_transaction') {
             ':depositedAt'          => ${'$'}t['depositedAt'] ?? null
         ]);
 
+        // Otomatis sinkronkan status tagihan di tabel bills ke PAID
+        if (!empty(${'$'}t['customerId']) && !empty(${'$'}t['periodMonth'])) {
+            ${'$'}stmtMarkPaid = ${'$'}pdo->prepare("UPDATE `bills` 
+                SET `status` = 'PAID',
+                    `paidAt` = :paidAt,
+                    `paymentMethod` = :paymentMethod,
+                    `paidVia` = 'CASHIER',
+                    `cashierName` = :cashierName,
+                    `invoiceNumber` = :invoiceNumber
+                WHERE `customerId` = :customerId AND `periodMonth` = :periodMonth AND `status` = 'UNPAID'");
+            ${'$'}stmtMarkPaid->execute([
+                ':paidAt'        => ${'$'}t['paidAt'] ?? round(microtime(true) * 1000),
+                ':paymentMethod' => ${'$'}t['paymentMethod'] ?? 'TUNAI',
+                ':cashierName'   => ${'$'}t['cashierName'] ?? 'Kasir Utama',
+                ':invoiceNumber' => ${'$'}t['invoiceNumber'] ?? '',
+                ':customerId'    => ${'$'}t['customerId'],
+                ':periodMonth'   => ${'$'}t['periodMonth']
+            ]);
+        }
+
         echo json_encode([
             'status'  => 'success',
             'code'    => 200,
@@ -661,6 +830,22 @@ if (${'$'}action === 'push_customer') {
             ':status'       => ${'$'}c['status'] ?? 'ACTIVE',
             ':createdAt'    => ${'$'}c['createdAt'] ?? round(microtime(true) * 1000)
         ]);
+
+        // Perbarui nominal tagihan berjalan yang belum dibayar (UNPAID) jika tarif atau paket pelanggan diubah
+        if (isset(${'$'}c['monthlyFee']) && (float)${'$'}c['monthlyFee'] > 0) {
+            ${'$'}stmtUpdateBills = ${'$'}pdo->prepare("UPDATE `bills` 
+                SET `amount` = :amount, 
+                    `totalAmount` = :amount + `adminFee` - `discount`,
+                    `packageName` = :packageName,
+                    `customerName` = :customerName
+                WHERE `customerId` = :customerId AND `status` = 'UNPAID'");
+            ${'$'}stmtUpdateBills->execute([
+                ':amount'       => ${'$'}c['monthlyFee'],
+                ':packageName'  => ${'$'}c['packageName'] ?? '',
+                ':customerName' => ${'$'}c['name'],
+                ':customerId'   => ${'$'}c['id']
+            ]);
+        }
 
         echo json_encode([
             'status'  => 'success',
@@ -1026,6 +1211,7 @@ if (${'$'}action === 'check_payment_status') {
     }
 
     try {
+        // 1. Cek tabel transactions (Kasir)
         ${'$'}stmt = ${'$'}pdo->prepare("SELECT * FROM `transactions` WHERE `customerId` = :cid AND `periodMonth` = :pmonth LIMIT 1");
         ${'$'}stmt->execute([':cid' => ${'$'}cid, ':pmonth' => ${'$'}pmonth]);
         ${'$'}existing = ${'$'}stmt->fetch();
@@ -1037,22 +1223,413 @@ if (${'$'}action === 'check_payment_status') {
                 'status'               => 'success',
                 'code'                 => 200,
                 'is_paid'              => true,
+                'paid_via'             => 'CASHIER',
+                'cashier_name'         => ${'$'}existing['cashierName'] ?? 'Kasir Utama',
+                'invoice_number'       => ${'$'}existing['invoiceNumber'],
                 'existing_invoice'     => ${'$'}existing['invoiceNumber'],
                 'existing_transaction' => ${'$'}existing,
-                'message'              => "Tagihan periode {${'$'}pmonth} sudah lunas (No Faktur: {${'$'}existing['invoiceNumber']})"
+                'message'              => "Tagihan periode {${'$'}pmonth} sudah lunas di kasir (No Faktur: {${'$'}existing['invoiceNumber']})"
             ]);
-        } else {
-            echo json_encode([
-                'status'   => 'success',
-                'code'     => 200,
-                'is_paid'  => false,
-                'message'  => "Tagihan periode {${'$'}pmonth} belum dibayar"
-            ]);
+            exit();
         }
+
+        // 2. Cek tabel bills jika sudah dibayar via aplikasi pembayaran mandiri atau kanal lain
+        ${'$'}stmtBill = ${'$'}pdo->prepare("SELECT * FROM `bills` WHERE `customerId` = :cid AND `periodMonth` = :pmonth LIMIT 1");
+        ${'$'}stmtBill->execute([':cid' => ${'$'}cid, ':pmonth' => ${'$'}pmonth]);
+        ${'$'}bill = ${'$'}stmtBill->fetch();
+
+        if (${'$'}bill && ${'$'}bill['status'] === 'PAID') {
+            echo json_encode([
+                'status'               => 'success',
+                'code'                 => 200,
+                'is_paid'              => true,
+                'paid_via'             => ${'$'}bill['paidVia'] ?: 'SELF_PAYMENT',
+                'cashier_name'         => ${'$'}bill['cashierName'] ?: 'Aplikasi Pembayaran Mandiri',
+                'invoice_number'       => ${'$'}bill['invoiceNumber'] ?: ${'$'}bill['billCode'],
+                'existing_invoice'     => ${'$'}bill['invoiceNumber'] ?: ${'$'}bill['billCode'],
+                'message'              => "Tagihan periode {${'$'}pmonth} sudah lunas via {${'$'}bill['paidVia']} ({${'$'}bill['billCode']})"
+            ]);
+            exit();
+        }
+
+        echo json_encode([
+            'status'   => 'success',
+            'code'     => 200,
+            'is_paid'  => false,
+            'message'  => "Tagihan periode {${'$'}pmonth} belum dibayar"
+        ]);
         exit();
     } catch (Exception ${'$'}e) {
         http_response_code(500);
         echo json_encode(['status' => 'error', 'code' => 500, 'message' => 'Gagal memeriksa status: ' . ${'$'}e->getMessage()]);
+        exit();
+    }
+}
+
+// (N1) PUSH BILL (SIMPAN / PERBARUI DATA TAGIHAN TUNGGAL)
+if (${'$'}action === 'push_bill') {
+    ${'$'}b = ${'$'}jsonData['data'] ?? (${'$'}jsonData ?? ${'$'}_POST);
+    if (!is_array(${'$'}b) || empty(${'$'}b['customerId'])) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'code' => 400, 'message' => 'Data tagihan tidak lengkap']);
+        exit();
+    }
+
+    try {
+        ${'$'}stmt = ${'$'}pdo->prepare("INSERT INTO `bills`
+            (`id`, `billCode`, `customerId`, `customerCode`, `customerName`, `packageId`, `packageName`,
+             `periodMonth`, `dueDate`, `amount`, `adminFee`, `discount`, `totalAmount`, `status`,
+             `createdAt`, `paidAt`, `paymentMethod`, `paidVia`, `cashierName`, `invoiceNumber`, `notes`)
+            VALUES (:id, :billCode, :customerId, :customerCode, :customerName, :packageId, :packageName,
+             :periodMonth, :dueDate, :amount, :adminFee, :discount, :totalAmount, :status,
+             :createdAt, :paidAt, :paymentMethod, :paidVia, :cashierName, :invoiceNumber, :notes)
+            ON DUPLICATE KEY UPDATE
+            `customerName` = VALUES(`customerName`),
+            `packageName`  = VALUES(`packageName`),
+            `dueDate`      = VALUES(`dueDate`),
+            `amount`       = VALUES(`amount`),
+            `adminFee`     = VALUES(`adminFee`),
+            `discount`     = VALUES(`discount`),
+            `totalAmount`  = VALUES(`totalAmount`),
+            `status`       = VALUES(`status`),
+            `paidAt`       = VALUES(`paidAt`),
+            `paymentMethod`= VALUES(`paymentMethod`),
+            `paidVia`      = VALUES(`paidVia`),
+            `cashierName`  = VALUES(`cashierName`),
+            `invoiceNumber`= VALUES(`invoiceNumber`),
+            `notes`        = VALUES(`notes`);");
+
+        ${'$'}stmt->execute([
+            ':id'           => ${'$'}b['id'],
+            ':billCode'     => ${'$'}b['billCode'] ?? '',
+            ':customerId'   => ${'$'}b['customerId'],
+            ':customerCode' => ${'$'}b['customerCode'] ?? '',
+            ':customerName' => ${'$'}b['customerName'] ?? '',
+            ':packageId'    => ${'$'}b['packageId'] ?? 0,
+            ':packageName'  => ${'$'}b['packageName'] ?? '',
+            ':periodMonth'  => ${'$'}b['periodMonth'] ?? '',
+            ':dueDate'      => ${'$'}b['dueDate'] ?? 0,
+            ':amount'       => ${'$'}b['amount'] ?? 0,
+            ':adminFee'     => ${'$'}b['adminFee'] ?? 0,
+            ':discount'     => ${'$'}b['discount'] ?? 0,
+            ':totalAmount'  => ${'$'}b['totalAmount'] ?? 0,
+            ':status'       => ${'$'}b['status'] ?? 'UNPAID',
+            ':createdAt'    => ${'$'}b['createdAt'] ?? round(microtime(true) * 1000),
+            ':paidAt'       => ${'$'}b['paidAt'] ?? null,
+            ':paymentMethod'=> ${'$'}b['paymentMethod'] ?? '',
+            ':paidVia'      => ${'$'}b['paidVia'] ?? '',
+            ':cashierName'  => ${'$'}b['cashierName'] ?? '',
+            ':invoiceNumber'=> ${'$'}b['invoiceNumber'] ?? '',
+            ':notes'        => ${'$'}b['notes'] ?? ''
+        ]);
+
+        echo json_encode([
+            'status'  => 'success',
+            'code'    => 200,
+            'message' => 'Data tagihan berhasil disimpan di MySQL!',
+            'id'      => ${'$'}b['id']
+        ]);
+        exit();
+    } catch (Exception ${'$'}e) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'code' => 500, 'message' => 'Gagal menyimpan tagihan: ' . ${'$'}e->getMessage()]);
+        exit();
+    }
+}
+
+// (N2) GET UNPAID BILLS (DIBACA OLEH APLIKASI KASIR MAUPUN PEMBAYARAN MANDIRI)
+if (${'$'}action === 'get_unpaid_bills') {
+    try {
+        ${'$'}bills = ${'$'}pdo->query("SELECT * FROM `bills` WHERE `status` = 'UNPAID' ORDER BY `dueDate` ASC, `id` ASC")->fetchAll();
+        echo json_encode([
+            'status' => 'success',
+            'code'   => 200,
+            'data'   => ${'$'}bills,
+            'count'  => count(${'$'}bills)
+        ]);
+        exit();
+    } catch (Exception ${'$'}e) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'code' => 500, 'message' => 'Gagal mengambil data tagihan: ' . ${'$'}e->getMessage()]);
+        exit();
+    }
+}
+
+// (N3) GET CUSTOMER BILLS (DIBACA OLEH APLIKASI PEMBAYARAN MANDIRI PELANGGAN)
+if (${'$'}action === 'get_customer_bills') {
+    ${'$'}code = ${'$'}_GET['customerCode'] ?? (${'$'}jsonData['customerCode'] ?? '');
+    ${'$'}phone = ${'$'}_GET['phone'] ?? (${'$'}jsonData['phone'] ?? '');
+    ${'$'}cid = ${'$'}_GET['customerId'] ?? (${'$'}jsonData['customerId'] ?? 0);
+
+    try {
+        if (!empty(${'$'}cid)) {
+            ${'$'}stmt = ${'$'}pdo->prepare("SELECT * FROM `bills` WHERE `customerId` = :cid ORDER BY `dueDate` DESC");
+            ${'$'}stmt->execute([':cid' => ${'$'}cid]);
+        } elseif (!empty(${'$'}code)) {
+            ${'$'}stmt = ${'$'}pdo->prepare("SELECT * FROM `bills` WHERE `customerCode` = :code ORDER BY `dueDate` DESC");
+            ${'$'}stmt->execute([':code' => ${'$'}code]);
+        } elseif (!empty(${'$'}phone)) {
+            ${'$'}stmt = ${'$'}pdo->prepare("SELECT b.* FROM `bills` b JOIN `customers` c ON b.customerId = c.id WHERE c.phone = :phone ORDER BY b.dueDate DESC");
+            ${'$'}stmt->execute([':phone' => ${'$'}phone]);
+        } else {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'code' => 400, 'message' => 'Masukkan customerCode, phone, atau customerId']);
+            exit();
+        }
+
+        ${'$'}bills = ${'$'}stmt->fetchAll();
+        echo json_encode([
+            'status' => 'success',
+            'code'   => 200,
+            'data'   => ${'$'}bills,
+            'count'  => count(${'$'}bills)
+        ]);
+        exit();
+    } catch (Exception ${'$'}e) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'code' => 500, 'message' => 'Gagal mengambil tagihan pelanggan: ' . ${'$'}e->getMessage()]);
+        exit();
+    }
+}
+
+// (N4) PAY BILL (DIGUNAKAN OLEH APLIKASI PEMBAYARAN MANDIRI MAUPUN KASIR DENGAN LOCKING ATOMIK)
+if (${'$'}action === 'pay_bill') {
+    ${'$'}billId = ${'$'}jsonData['billId'] ?? (${'$'}_POST['billId'] ?? 0);
+    ${'$'}paymentMethod = ${'$'}jsonData['paymentMethod'] ?? (${'$'}_POST['paymentMethod'] ?? 'MANDIRI_ONLINE');
+    ${'$'}paidVia = ${'$'}jsonData['paidVia'] ?? (${'$'}_POST['paidVia'] ?? 'SELF_PAYMENT');
+    ${'$'}cashierName = ${'$'}jsonData['cashierName'] ?? (${'$'}_POST['cashierName'] ?? 'Aplikasi Pembayaran Mandiri');
+    ${'$'}invoiceNumber = ${'$'}jsonData['invoiceNumber'] ?? (${'$'}_POST['invoiceNumber'] ?? '');
+    ${'$'}now = round(microtime(true) * 1000);
+
+    if (empty(${'$'}billId)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'code' => 400, 'message' => 'billId diperlukan']);
+        exit();
+    }
+
+    if (empty(${'$'}invoiceNumber)) {
+        ${'$'}invoiceNumber = 'INV-' . date('Ymd-His') . '-' . rand(100, 999);
+    }
+
+    ${'$'}pdo->beginTransaction();
+    try {
+        ${'$'}stmt = ${'$'}pdo->prepare("SELECT * FROM `bills` WHERE `id` = :id FOR UPDATE");
+        ${'$'}stmt->execute([':id' => ${'$'}billId]);
+        ${'$'}bill = ${'$'}stmt->fetch();
+
+        if (!${'$'}bill) {
+            ${'$'}pdo->rollBack();
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'code' => 404, 'message' => 'Tagihan tidak ditemukan']);
+            exit();
+        }
+
+        if (${'$'}bill['status'] === 'PAID') {
+            ${'$'}pdo->rollBack();
+            http_response_code(409);
+            echo json_encode([
+                'status'         => 'error',
+                'code'           => 409,
+                'is_double_pay'  => true,
+                'message'        => 'Tagihan ini SUDAH LUNAS sebelumnya! Pembayaran ganda dicegah.',
+                'invoiceNumber'  => ${'$'}bill['invoiceNumber'],
+                'paidAt'         => ${'$'}bill['paidAt'],
+                'paidVia'        => ${'$'}bill['paidVia']
+            ]);
+            exit();
+        }
+
+        // Update tagihan menjadi PAID
+        ${'$'}updateStmt = ${'$'}pdo->prepare("UPDATE `bills` SET 
+            `status` = 'PAID',
+            `paidAt` = :paidAt,
+            `paymentMethod` = :paymentMethod,
+            `paidVia` = :paidVia,
+            `cashierName` = :cashierName,
+            `invoiceNumber` = :invoiceNumber
+            WHERE `id` = :id");
+        ${'$'}updateStmt->execute([
+            ':id'            => ${'$'}billId,
+            ':paidAt'        => ${'$'}now,
+            ':paymentMethod' => ${'$'}paymentMethod,
+            ':paidVia'       => ${'$'}paidVia,
+            ':cashierName'   => ${'$'}cashierName,
+            ':invoiceNumber' => ${'$'}invoiceNumber
+        ]);
+
+        // Simpan juga ke transactions agar laporan pendapatan terpusat sinkron
+        ${'$'}trxId = round(microtime(true) * 1000) + rand(1, 999);
+        ${'$'}insertTrx = ${'$'}pdo->prepare("INSERT INTO `transactions` 
+            (`id`, `invoiceNumber`, `customerId`, `customerName`, `customerCode`, `packageName`, `monthlyFee`,
+             `adminFee`, `discount`, `totalAmount`, `periodMonth`, `paymentMethod`, `cashierName`, `cashierRole`,
+             `notes`, `paidAt`, `isPrinted`, `isDeposited`)
+            VALUES (:id, :inv, :cid, :cname, :ccode, :pname, :fee, :admin, :disc, :total, :pmonth, :pmethod, :cby, :role, :notes, :pat, 0, 0)
+            ON DUPLICATE KEY UPDATE `invoiceNumber` = VALUES(`invoiceNumber`)");
+        ${'$'}insertTrx->execute([
+            ':id'      => ${'$'}trxId,
+            ':inv'     => ${'$'}invoiceNumber,
+            ':cid'     => ${'$'}bill['customerId'],
+            ':cname'   => ${'$'}bill['customerName'],
+            ':ccode'   => ${'$'}bill['customerCode'],
+            ':pname'   => ${'$'}bill['packageName'],
+            ':fee'     => ${'$'}bill['amount'],
+            ':admin'   => ${'$'}bill['adminFee'],
+            ':disc'    => ${'$'}bill['discount'],
+            ':total'   => ${'$'}bill['totalAmount'],
+            ':pmonth'  => ${'$'}bill['periodMonth'],
+            ':pmethod' => ${'$'}paymentMethod,
+            ':cby'     => ${'$'}cashierName,
+            ':role'    => (${'$'}paidVia === 'CASHIER' ? 'KASIR' : 'SELF_PAYMENT'),
+            ':notes'   => 'Lunas via ' . ${'$'}paidVia,
+            ':pat'     => ${'$'}now
+        ]);
+
+        ${'$'}pdo->commit();
+
+        echo json_encode([
+            'status'        => 'success',
+            'code'          => 200,
+            'message'       => 'Pembayaran berhasil dikonfirmasi dan tagihan lunas!',
+            'billId'        => ${'$'}billId,
+            'invoiceNumber' => ${'$'}invoiceNumber,
+            'paidAt'        => ${'$'}now
+        ]);
+        exit();
+    } catch (Exception ${'$'}e) {
+        ${'$'}pdo->rollBack();
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'code' => 500, 'message' => 'Gagal memproses pembayaran: ' . ${'$'}e->getMessage()]);
+        exit();
+    }
+}
+
+// (N5) DELETE BILL
+if (${'$'}action === 'delete_bill') {
+    ${'$'}id = ${'$'}jsonData['id'] ?? (${'$'}_POST['id'] ?? (${'$'}_GET['id'] ?? 0));
+    if (empty(${'$'}id)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'code' => 400, 'message' => 'ID Tagihan tidak boleh kosong']);
+        exit();
+    }
+
+    try {
+        ${'$'}stmt = ${'$'}pdo->prepare("DELETE FROM `bills` WHERE `id` = :id");
+        ${'$'}stmt->execute([':id' => ${'$'}id]);
+        echo json_encode(['status' => 'success', 'code' => 200, 'message' => 'Tagihan berhasil dihapus dari MySQL!']);
+        exit();
+    } catch (Exception ${'$'}e) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'code' => 500, 'message' => 'Gagal menghapus tagihan: ' . ${'$'}e->getMessage()]);
+        exit();
+    }
+}
+
+// (N6) GENERATE MONTHLY BILLS (SINKRONISASI TAGIHAN AWAL BULAN / CRON SERVER HOSTING)
+if (${'$'}action === 'generate_bills' || ${'$'}action === 'cron_generate_bills') {
+    ${'$'}targetPeriod = ${'$'}_GET['period'] ?? (${'$'}jsonData['period'] ?? '');
+    ${'$'}adminFee = (int)(${'$'}_GET['adminFee'] ?? (${'$'}jsonData['adminFee'] ?? 0));
+
+    // Jika period tidak dispesifikasikan, gunakan format Indonesia bulan berjalan
+    if (empty(${'$'}targetPeriod)) {
+        ${'$'}indoMonths = [
+            1 => 'Januari', 2 => 'Februari', 3 => 'Maret', 4 => 'April',
+            5 => 'Mei', 6 => 'Juni', 7 => 'Juli', 8 => 'Agustus',
+            9 => 'September', 10 => 'Oktober', 11 => 'November', 12 => 'Desember'
+        ];
+        ${'$'}m = (int)date('n');
+        ${'$'}y = date('Y');
+        ${'$'}targetPeriod = (${'$'}indoMonths[${'$'}m] ?? date('F')) . ' ' . ${'$'}y;
+    }
+
+    try {
+        // Ambil semua pelanggan aktif & terisolir
+        ${'$'}custStmt = ${'$'}pdo->query("SELECT * FROM `customers` WHERE `status` IN ('ACTIVE', 'ISOLATED') ORDER BY `id` ASC");
+        ${'$'}custs = ${'$'}custStmt->fetchAll();
+
+        ${'$'}generated = 0;
+        ${'$'}skipped = 0;
+        ${'$'}curMonthCode = date('Ym');
+        ${'$'}curYear = (int)date('Y');
+        ${'$'}curMonthNum = (int)date('n');
+
+        foreach (${'$'}custs as ${'$'}c) {
+            // Cek apakah tagihan untuk periode ini sudah ada
+            ${'$'}checkStmt = ${'$'}pdo->prepare("SELECT `id`, `status` FROM `bills` WHERE `customerId` = :cid AND `periodMonth` = :pmonth LIMIT 1");
+            ${'$'}checkStmt->execute([':cid' => ${'$'}c['id'], ':pmonth' => ${'$'}targetPeriod]);
+            if (${'$'}checkStmt->fetch()) {
+                ${'$'}skipped++;
+                continue;
+            }
+
+            // Cek apakah sudah pernah dibayar di transactions
+            ${'$'}trxCheck = ${'$'}pdo->prepare("SELECT `id`, `invoiceNumber`, `paidAt`, `paymentMethod`, `cashierName` FROM `transactions` WHERE `customerId` = :cid AND `periodMonth` = :pmonth LIMIT 1");
+            ${'$'}trxCheck->execute([':cid' => ${'$'}c['id'], ':pmonth' => ${'$'}targetPeriod]);
+            ${'$'}existingTrx = ${'$'}trxCheck->fetch();
+
+            ${'$'}dueDay = isset(${'$'}c['dueDay']) ? (int)${'$'}c['dueDay'] : 10;
+            if (${'$'}dueDay < 1) ${'$'}dueDay = 10;
+            if (${'$'}dueDay > 28) ${'$'}dueDay = 28;
+
+            ${'$'}dueTimestamp = mktime(23, 59, 59, ${'$'}curMonthNum, ${'$'}dueDay, ${'$'}curYear) * 1000;
+            ${'$'}billId = round(microtime(true) * 1000) + rand(100, 9999);
+            ${'$'}billCode = 'BILL-' . (${'$'}c['customerCode'] ?: 'CUST') . '-' . ${'$'}curMonthCode;
+            ${'$'}fee = (int)(${'$'}c['monthlyFee'] ?? 0);
+            ${'$'}total = ${'$'}fee + ${'$'}adminFee;
+
+            ${'$'}isPaid = !empty(${'$'}existingTrx);
+
+            ${'$'}insStmt = ${'$'}pdo->prepare("INSERT INTO `bills`
+                (`id`, `billCode`, `customerId`, `customerCode`, `customerName`, `packageId`, `packageName`,
+                 `periodMonth`, `dueDate`, `amount`, `adminFee`, `discount`, `totalAmount`, `status`,
+                 `createdAt`, `paidAt`, `paymentMethod`, `paidVia`, `cashierName`, `invoiceNumber`, `notes`)
+                VALUES (:id, :bcode, :cid, :ccode, :cname, :pid, :pname,
+                        :pmonth, :ddate, :amt, :adm, 0, :total, :st,
+                        :cat, :pat, :pmethod, :pvia, :cby, :inv, :notes)");
+
+            ${'$'}insStmt->execute([
+                ':id'          => ${'$'}billId,
+                ':bcode'       => ${'$'}billCode,
+                ':cid'         => ${'$'}c['id'],
+                ':ccode'       => ${'$'}c['customerCode'] ?? '',
+                ':cname'       => ${'$'}c['name'] ?? '',
+                ':pid'         => ${'$'}c['packageId'] ?? 0,
+                ':pname'       => ${'$'}c['packageName'] ?? '',
+                ':pmonth'      => ${'$'}targetPeriod,
+                ':ddate'       => ${'$'}dueTimestamp,
+                ':amt'         => ${'$'}fee,
+                ':adm'         => ${'$'}adminFee,
+                ':total'       => ${'$'}total,
+                ':st'          => ${'$'}isPaid ? 'PAID' : 'UNPAID',
+                ':cat'         => round(microtime(true) * 1000),
+                ':pat'         => ${'$'}isPaid ? (${'$'}existingTrx['paidAt'] ?? null) : null,
+                ':pmethod'     => ${'$'}isPaid ? (${'$'}existingTrx['paymentMethod'] ?? 'TUNAI') : '',
+                ':pvia'        => ${'$'}isPaid ? 'CASHIER' : '',
+                ':cby'         => ${'$'}isPaid ? (${'$'}existingTrx['cashierName'] ?? 'Kasir') : '',
+                ':inv'         => ${'$'}isPaid ? (${'$'}existingTrx['invoiceNumber'] ?? null) : null,
+                ':notes'       => ${'$'}isPaid ? 'Lunas tercatat otomatis' : 'Tagihan awal bulan'
+            ]);
+
+            ${'$'}generated++;
+        }
+
+        echo json_encode([
+            'status'    => 'success',
+            'code'      => 200,
+            'message'   => "Penerbitan tagihan awal bulan ({${'$'}targetPeriod}) selesai: {${'$'}generated} tagihan baru diterbitkan, {${'$'}skipped} sudah ada sebelumnya.",
+            'period'    => ${'$'}targetPeriod,
+            'generated' => ${'$'}generated,
+            'skipped'   => ${'$'}skipped,
+            'total'     => count(${'$'}custs)
+        ]);
+        exit();
+
+    } catch (Exception ${'$'}e) {
+        http_response_code(500);
+        echo json_encode([
+            'status'  => 'error',
+            'code'    => 500,
+            'message' => 'Gagal menerbitkan tagihan awal bulan: ' . ${'$'}e->getMessage()
+        ]);
         exit();
     }
 }

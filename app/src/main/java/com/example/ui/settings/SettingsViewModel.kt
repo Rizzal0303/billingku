@@ -666,11 +666,12 @@ class SettingsViewModel(
         onComplete: (StaffEntity) -> Unit = {}
     ) {
         viewModelScope.launch {
+            val finalPin = if (pin.isNotBlank()) pin.trim() else staff.pin
             val updated = staff.copy(
                 name = name.trim(),
                 username = username.trim(),
                 phone = phone.trim(),
-                pin = pin.trim()
+                pin = finalPin
             )
             repository.updateStaff(updated)
             onComplete(updated)

@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.data.local.dao.AnnouncementDao
+import com.example.data.local.dao.BillDao
 import com.example.data.local.dao.CustomerDao
 import com.example.data.local.dao.PackagePlanDao
 import com.example.data.local.dao.SettlementDao
@@ -13,6 +14,7 @@ import com.example.data.local.dao.StaffDao
 import com.example.data.local.dao.SyncQueueDao
 import com.example.data.local.dao.TransactionDao
 import com.example.data.local.entity.AnnouncementEntity
+import com.example.data.local.entity.BillEntity
 import com.example.data.local.entity.CustomerEntity
 import com.example.data.local.entity.PackagePlanEntity
 import com.example.data.local.entity.SettlementBatchEntity
@@ -31,9 +33,10 @@ import kotlinx.coroutines.launch
         StaffEntity::class,
         SettlementBatchEntity::class,
         SyncQueueEntity::class,
-        AnnouncementEntity::class
+        AnnouncementEntity::class,
+        BillEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -44,6 +47,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun settlementDao(): SettlementDao
     abstract fun syncQueueDao(): SyncQueueDao
     abstract fun announcementDao(): AnnouncementDao
+    abstract fun billDao(): BillDao
 
     companion object {
         @Volatile
